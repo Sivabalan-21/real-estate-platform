@@ -99,11 +99,22 @@ function Login() {
       <div className="login-card">
         
         <div className="login-header">
-          <img 
-            src="https://placehold.co/100x100/2563eb/ffffff?text=Logo" 
-            alt="Logo" 
-            className="login-logo"
-          />
+          <div style={{
+  width: "70px",
+  height: "70px",
+  background: "#2563eb",
+  borderRadius: "16px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  margin: "0 auto 16px",
+  color: "#ffffff",
+  fontWeight: "600",
+  fontSize: "16px",
+  letterSpacing: "0.5px"
+}}>
+  Logo
+</div>
           
           <h2>Property Portal</h2>
           <p>Sign in to manage your real estate</p>
