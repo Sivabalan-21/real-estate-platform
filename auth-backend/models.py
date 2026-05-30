@@ -30,6 +30,9 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=uuid_str)
     username = Column(String, unique=True, nullable=True, index=True)
+    # add these after the email column
+    full_name = Column(String, nullable=True)
+    phone     = Column(String, nullable=True)
     email = Column(String, unique=True, nullable=False, index=True)
     password = Column(String, nullable=True)
     role = Column(String, nullable=False, index=True)

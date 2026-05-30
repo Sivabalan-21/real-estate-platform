@@ -11,7 +11,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from sqlalchemy import text  
 
 from database import Base, SessionLocal, engine
 from models import Company, User
@@ -30,15 +29,17 @@ from services.user_service import (
     update_user as update_user_service,
     visible_users,
 )
-from tokens import ALGORITHM, SECRET_KEY, create_access_token, create_reset_token
+from tokens import ALGORITHM, SECRET_KEY, create_access_token
 import shutil
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 load_dotenv()
 
 app = FastAPI(title="Property Portal API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 security = HTTPBearer()
-active_sessions = set()
 
 conf = ConnectionConfig(
     MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
@@ -50,9 +51,10 @@ conf = ConnectionConfig(
     MAIL_SSL_TLS=False,
 )
 
+# REPLACE ✅
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,40 +147,6 @@ async def send_email(email: str, subject: str, body: str):
 def home():
     return {"message": "Backend running"}
 
-
- # ← add this import at top of file if not present
-
-@app.get("/setup-super-admin")
-def create_super_admin(db: Session = Depends(get_db)):
-    db_name = db.execute(text("SELECT current_database()")).scalar()
-    print("CONNECTED DATABASE:", db_name)
-    # check if exists
-    existing = db.query(User).filter(User.username == "superadmin").first()
-    if existing:
-        return {"message": "Super Admin already exists"}
-
-    # hash password
-    hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
-
-    # create user (FIXED)
-    user = User(
-        id=str(uuid.uuid4()),   # ✅ CORRECT FIELD
-        username="superadmin",
-        email="admin@gmail.com",
-        password=hashed,
-        role="Super Admin",
-        status="active",
-        created_by=None,
-        updated_by=None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-
-    db.add(user)
-    db.commit()
-
-    return {"message": "Super Admin created"}
-
 @app.post("/auth/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == data.username).first()
@@ -195,9 +163,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     # ✅ Company/slug check — must belong to this portal
     if data.slug:
         company = db.query(Company).filter(Company.slug == data.slug).first()
-        print("PORTAL COMPANY:", company.name if company else "NOT FOUND")
-        print("USER COMPANY ID:", user.company_id)
-        print("PORTAL COMPANY ID:", company.id if company else "NONE")
         if not company or user.company_id != company.id:
             raise HTTPException(400, "Invalid credentials")
 
@@ -213,7 +178,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         "role": user.role,
         "company_id": user.company_id,
     })
-    active_sessions.add(user.username)
 
     return {
         "access_token": token,
@@ -233,7 +197,7 @@ async def create_user_route(
     db = Depends(get_db),
 ):
     new_user = create_user(db, user, data)
-    register_link = f"http://localhost:3000/register/{new_user.reset_token}"
+    register_link = f"{FRONTEND_URL}/register/{new_user.reset_token}"
 
     try:
         await send_invite_email(
@@ -244,9 +208,6 @@ async def create_user_route(
         )
     except Exception as exc:
         print("INVITE EMAIL ERROR:", exc)
-
-    print("INVITE LINK:", register_link)
-    return {"message": f"{new_user.role} invited successfully", "user": serialize_user(new_user)}
 
 
 @app.get("/users")
@@ -337,10 +298,7 @@ async def update_user_route(
     # SEND RESET EMAIL
     if data.send_reset and updated.reset_token:
 
-        reset_link = (
-            f"http://localhost:3000/reset-password/"
-            f"{updated.reset_token}"
-        )
+        reset_link = f"{FRONTEND_URL}/reset-password/{updated.reset_token}"
 
         try:
             await send_reset_email(
@@ -348,9 +306,6 @@ async def update_user_route(
                 reset_link,
                 updated.username or updated.email.split("@")[0],
             )
-
-            print("RESET LINK:", reset_link)
-
         except Exception as exc:
             print("RESET EMAIL ERROR:", exc)
 
@@ -427,9 +382,6 @@ async def resend_registration_route(
         )
     except Exception as exc:
         print("RESEND INVITE EMAIL ERROR:", exc)
-
-    print("RESENT INVITE LINK:", register_link)
-    return {"message": "Registration link resent successfully"}
 
 
 @app.get("/register/{token}")
@@ -563,7 +515,7 @@ async def upload_logo(
         Company.id == user.company_id
     ).first()
 
-    company.logo = f"http://localhost:8000/uploads/{filename}"
+    company.logo = f"{BACKEND_URL}/uploads/{filename}"
 
     db.commit()
 

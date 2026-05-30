@@ -34,9 +34,6 @@ function Login() {
       });
 
       const data = await response.json();
-      
-      console.log("LOGIN RESPONSE:", data);
-      console.log("API RESPONSE:", data);
 
       if (data.access_token) {
         const payload = JSON.parse(atob(data.access_token.split('.')[1]));

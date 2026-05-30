@@ -31,11 +31,13 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-class TenantCreate(BaseModel):
+class UserOut(BaseModel):
+    id: int
     username: str
-    email: EmailStr
-    property_name: str
-    unit_name: str
-    owner_name: str
-    base_rent: float
-    lease_start: str
+    email: str
+    role: str
+    company_id: int | None = None
+    is_active: bool
+
+    class Config:
+        from_attributes = True  # was orm_mode=True in Pydantic v1

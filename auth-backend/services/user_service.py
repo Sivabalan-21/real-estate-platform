@@ -393,11 +393,14 @@ def complete_registration(db: Session, token: str, data: dict):
 
     user.username = username
     user.password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    user.full_name = data.get("full_name", "").strip() or None   # ← add
+    user.phone     = data.get("phone",     "").strip() or None   # ← add
     user.status = "active"
     user.reset_token = None
     user.token_type = None
     user.token_expiry = None
     user.updated_at = datetime.utcnow()
+    
 
     # Commit persists both the new Company row and the updated user.company_id
     # in a single transaction — either both succeed or both roll back.

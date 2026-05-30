@@ -6,8 +6,9 @@ function PMLayout() {
   const username = localStorage.getItem("username");
 
   const logout = () => {
+    const slug = localStorage.getItem("company_slug");
     localStorage.clear();
-    navigate("/");
+    navigate(slug ? `/portal/${slug}` : "/");
   };
 
   return (

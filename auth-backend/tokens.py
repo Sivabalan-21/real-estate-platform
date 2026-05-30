@@ -3,9 +3,10 @@ import os
 import secrets
 
 from jose import jwt
-
-
-SECRET_KEY = os.getenv("SECRET_KEY", "mysecretkey123")
+# REPLACE WITH ✅
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable not set")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 INVITE_TOKEN_HOURS = int(os.getenv("INVITE_TOKEN_HOURS", "24"))

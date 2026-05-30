@@ -113,7 +113,6 @@ function ViewUsers() {
         return; 
       }
       if (!res.ok) {
-        console.error("Failed to fetch users:", res.status);
         return; // don't logout on 403/500 — just skip
       }
       const data = await res.json();
@@ -132,7 +131,6 @@ function ViewUsers() {
       if (e.key === "token" && !e.newValue) {
         // Token was removed in another tab — don't auto-logout this tab
         // Just stop polling, the user is still active here
-        console.warn("Token removed in another tab — ignoring");
       }
     };
     window.addEventListener("storage", handleStorageChange);
@@ -163,11 +161,8 @@ function ViewUsers() {
     setCompanies(data);
   } else {
     setCompanies([]);
-    console.error("Invalid companies response:", data);
   }
 })
-      .catch(err => console.error(err));
-
     // Clear the interval when the component unmounts (only set for Super Admin)
     return () => { 
       if (interval) clearInterval(interval);
