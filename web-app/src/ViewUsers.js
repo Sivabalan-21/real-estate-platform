@@ -73,7 +73,6 @@ function ViewUsers() {
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
-  const [filterCompany, setFilterCompany] = useState("All");
 
   // CREATE modal state
   const [showCreate,  setShowCreate]  = useState(false);
@@ -180,9 +179,8 @@ function ViewUsers() {
       u.company_name?.toLowerCase().includes(search.toLowerCase());
 
     const matchRole = filterRole === "All" || u.role === filterRole;
-    const matchCompany = filterCompany === "All" || u.company_name === filterCompany;
-    return matchSearch && matchRole && matchCompany;
-});
+    return matchSearch && matchRole;
+  });
 
   // ── CREATE ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -382,17 +380,6 @@ function ViewUsers() {
             </button>
           ))}
         </div>
-        <div style={s.roleFilters}>
-  {["All", ...new Set(users.map(u => u.company_name).filter(Boolean))].map(c => (
-    <button
-      key={c}
-      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
-      onClick={() => setFilterCompany(c)}
-    >
-      {c === "All" ? "All Companies" : c}
-    </button>
-  ))}
-</div>
       </div>
 
       {/* TABLE */}
