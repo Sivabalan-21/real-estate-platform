@@ -25,7 +25,7 @@ function Login() {
     setStatus({ message: 'Logging in...', type: 'success' });
 
     try {
-      const response = await fetch("http://localhost:8000/auth/login", {
+      const response = await fetch("http://187.127.180.107/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

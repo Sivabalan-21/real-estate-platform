@@ -13,7 +13,7 @@ function CompanySettings() {
     formData.append("file", file);
 
     try {
-      const res  = await fetch(`http://localhost:8000/company/upload-logo`, {
+      const res  = await fetch(`http://187.127.180.107/company/upload-logo`, {
         method:  "POST",
         headers: { Authorization: `Bearer ${token}` },
         body:    formData,

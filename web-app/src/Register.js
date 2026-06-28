@@ -87,7 +87,7 @@ function Register() {
   const [uploadStatus, setUploadStatus] = useState(""); // "uploading" | "done" | "failed" | ""
 
   useEffect(() => {
-    fetch(`http://localhost:8000/register/${token}`)
+    fetch(`http://187.127.180.107/register/${token}`)
       .then(r => { if (!r.ok) throw new Error("Invalid or expired invite link"); return r.json(); })
       .then(data => setInvite(data))
       .catch(e  => setLinkError(e.message))
@@ -118,7 +118,7 @@ function Register() {
       setUploadStatus("uploading");
 
       // Step 1: auto-login to get a JWT token
-      const loginRes = await fetch("http://localhost:8000/auth/login", {
+      const loginRes = await fetch("http://187.127.180.107/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password, role: "Company Admin", slug }),
@@ -137,7 +137,7 @@ function Register() {
       const formData = new FormData();
       formData.append("file", logo);
 
-      const uploadRes = await fetch("http://localhost:8000/company/upload-logo", {
+      const uploadRes = await fetch("http://187.127.180.107/company/upload-logo", {
         method: "POST",
         headers: { Authorization: `Bearer ${authToken}` },
         body: formData,
@@ -160,7 +160,7 @@ function Register() {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`http://localhost:8000/complete-registration/${token}`, {
+      const res = await fetch(`http://187.127.180.107/complete-registration/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

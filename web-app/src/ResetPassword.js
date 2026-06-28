@@ -13,7 +13,7 @@ function ResetPassword() {
 
   // 🔥 OPTIONAL: fetch username (if backend supports)
   useEffect(() => {
-    fetch(`http://localhost:8000/auth/validate-token/${token}`)
+    fetch(`http://187.127.180.107/auth/validate-token/${token}`)
       .then(res => res.json())
       .then(data => {
         if (data.username) {
@@ -33,7 +33,7 @@ function ResetPassword() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/reset-password", {
+      const res = await fetch("http://187.127.180.107/auth/reset-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

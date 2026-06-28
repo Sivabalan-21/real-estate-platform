@@ -26,7 +26,7 @@ function AdminDashboard() {
   useEffect(() => {
     if (!token) { navigate("/"); return; }
 
-    fetch("http://localhost:8000/users/my-hierarchy", {
+    fetch("http://187.127.180.107/users/my-hierarchy", {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => {

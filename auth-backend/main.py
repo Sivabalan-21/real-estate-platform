@@ -33,7 +33,7 @@ from tokens import ALGORITHM, SECRET_KEY, create_access_token
 import shutil
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://187.127.180.107")
 
 load_dotenv()
 

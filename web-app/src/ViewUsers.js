@@ -105,7 +105,7 @@ function ViewUsers() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/users/my-hierarchy", {
+      const res = await fetch("http://187.127.180.107/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { 
@@ -150,7 +150,7 @@ function ViewUsers() {
       }, 30000);
     }
 
-    fetch("http://localhost:8000/companies", {
+    fetch("http://187.127.180.107/companies", {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -199,7 +199,7 @@ function ViewUsers() {
     setCreating(true);
     setCreateErr("");
     try {
-      const res = await fetch("http://localhost:8000/users/create", {
+      const res = await fetch("http://187.127.180.107/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -257,7 +257,7 @@ function ViewUsers() {
       };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
 
-      const url = `http://localhost:8000/users/update/${editUser.username || editUser.user_id}`;
+      const url = `http://187.127.180.107/users/update/${editUser.username || editUser.user_id}`;
 
       const res = await fetch(url, {
         method: "PUT",
@@ -295,7 +295,7 @@ function ViewUsers() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://localhost:8000/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://187.127.180.107/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -322,7 +322,7 @@ function ViewUsers() {
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://localhost:8000/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://187.127.180.107/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });

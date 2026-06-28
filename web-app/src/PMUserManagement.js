@@ -6,7 +6,7 @@ function PMUserManagement() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/users", {
+      const res = await fetch("http://187.127.180.107/users", {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -32,7 +32,7 @@ function PMUserManagement() {
   const handleDelete = async (userId) => {
     if (!window.confirm("Delete this user?")) return;
 
-    await fetch(`http://localhost:8000/users/delete/${userId}`, {
+    await fetch(`http://187.127.180.107/users/delete/${userId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` }
     });

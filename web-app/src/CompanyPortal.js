@@ -32,7 +32,7 @@ export default function CompanyPortal() {
   const [loginErr,   setLoginErr]   = useState("");
 
   useEffect(() => {
-    fetch(`http://localhost:8000/portal/${slug}`)
+    fetch(`http://187.127.180.107/portal/${slug}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d  => { setPortal(d); setPortalLoading(false); })
       .catch(() => { setPortalErr(true); setPortalLoading(false); });
@@ -44,7 +44,7 @@ export default function CompanyPortal() {
     setSubmitting(true);
     setLoginErr("");
     try {
-      const res  = await fetch("http://localhost:8000/auth/login", {
+      const res  = await fetch("http://187.127.180.107/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password, role , slug }),

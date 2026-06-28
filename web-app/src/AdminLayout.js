@@ -14,7 +14,7 @@ useEffect(() => {
 
   const check = async () => {
     try {
-      const res = await fetch("http://localhost:8000/users/me", {
+      const res = await fetch("http://187.127.180.107/users/me", {
         headers: { Authorization: `Bearer ${token}` }
       });
 

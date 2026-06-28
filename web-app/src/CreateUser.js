@@ -55,7 +55,7 @@ function CreateUser() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:8000/users/create", {
+      const res = await fetch("http://187.127.180.107/users/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

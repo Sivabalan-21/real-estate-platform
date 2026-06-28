@@ -10,7 +10,7 @@ function Dashboard() {
 
   useEffect(() => {
     if (!token) { navigate("/"); return; }
-    fetch("http://localhost:8000/users", {
+    fetch("http://187.127.180.107/users", {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
