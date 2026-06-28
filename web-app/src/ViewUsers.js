@@ -73,6 +73,7 @@ function ViewUsers() {
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
+  const [filterCompany, setFilterCompany] = useState("All");
 
   // CREATE modal state
   const [showCreate,  setShowCreate]  = useState(false);
@@ -105,7 +106,7 @@ function ViewUsers() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://187.127.180.107/users/my-hierarchy", {
+      const res = await fetch("http://localhost:8000/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { 
@@ -150,7 +151,7 @@ function ViewUsers() {
       }, 30000);
     }
 
-    fetch("http://187.127.180.107/companies", {
+    fetch("http://localhost:8000/companies", {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -179,8 +180,9 @@ function ViewUsers() {
       u.company_name?.toLowerCase().includes(search.toLowerCase());
 
     const matchRole = filterRole === "All" || u.role === filterRole;
-    return matchSearch && matchRole;
-  });
+    const matchCompany = filterCompany === "All" || u.company_name === filterCompany;
+    return matchSearch && matchRole && matchCompany;
+});
 
   // ── CREATE ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -199,7 +201,7 @@ function ViewUsers() {
     setCreating(true);
     setCreateErr("");
     try {
-      const res = await fetch("http://187.127.180.107/users/create", {
+      const res = await fetch("http://localhost:8000/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -257,7 +259,7 @@ function ViewUsers() {
       };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
 
-      const url = `http://187.127.180.107/users/update/${editUser.username || editUser.user_id}`;
+      const url = `http://localhost:8000/users/update/${editUser.username || editUser.user_id}`;
 
       const res = await fetch(url, {
         method: "PUT",
@@ -295,7 +297,7 @@ function ViewUsers() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://187.127.180.107/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -322,7 +324,7 @@ function ViewUsers() {
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://187.127.180.107/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -380,6 +382,17 @@ function ViewUsers() {
             </button>
           ))}
         </div>
+        <div style={s.roleFilters}>
+  {["All", ...new Set(users.map(u => u.company_name).filter(Boolean))].map(c => (
+    <button
+      key={c}
+      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
+      onClick={() => setFilterCompany(c)}
+    >
+      {c === "All" ? "All Companies" : c}
+    </button>
+  ))}
+</div>
       </div>
 
       {/* TABLE */}
