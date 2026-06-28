@@ -64,6 +64,7 @@ function AdminUsers() {
   const [search,      setSearch]      = useState("");
   const [filterRole,  setFilterRole]  = useState("All");
   const [toast,       setToast]       = useState(null);
+  const [filterCompany, setFilterCompany] = useState("All");
 
   // ── Invite modal
   const [showInvite,   setShowInvite]   = useState(false);
@@ -122,8 +123,9 @@ function AdminUsers() {
       u.email?.toLowerCase().includes(search.toLowerCase()) ||
       u.username?.toLowerCase().includes(search.toLowerCase());
     const matchRole = filterRole === "All" || u.role === filterRole;
-    return matchSearch && matchRole;
-  });
+    const matchCompany = filterCompany === "All" || u.company === filterCompany;
+    return matchSearch && matchRole && matchCompany;
+});
 
   // ─── INVITE ───────────────────────────────────────────────────────────────
   const handleInvite = async () => {
@@ -285,6 +287,18 @@ function AdminUsers() {
             </button>
           ))}
         </div>
+
+        <div style={s.roleFilters}>
+  {["All", ...new Set(users.map(u => u.company).filter(Boolean))].map(c => (
+    <button
+      key={c}
+      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
+      onClick={() => setFilterCompany(c)}
+    >
+      {c === "All" ? "All Companies" : c}
+    </button>
+  ))}
+</div>
       </div>
 
       {/* TABLE */}
