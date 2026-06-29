@@ -64,7 +64,6 @@ function AdminUsers() {
   const [search,      setSearch]      = useState("");
   const [filterRole,  setFilterRole]  = useState("All");
   const [toast,       setToast]       = useState(null);
-  const [filterCompany, setFilterCompany] = useState("All");
 
   // ── Invite modal
   const [showInvite,   setShowInvite]   = useState(false);
@@ -120,11 +119,11 @@ function AdminUsers() {
   // ─── filtered list ────────────────────────────────────────────────────────
   const filtered = users.filter(u => {
     const matchSearch = !search ||
-      u.email?.toLowerCase().includes(search.toLowerCase()) ||
-      u.username?.toLowerCase().includes(search.toLowerCase());
-    const matchRole = filterRole === "All" || u.role === filterRole;
-    const matchCompany = filterCompany === "All" || u.company === filterCompany;
-    return matchSearch && matchRole && matchCompany;
+  u.email?.toLowerCase().includes(search.toLowerCase()) ||
+  u.username?.toLowerCase().includes(search.toLowerCase()) ||
+  u.company_name?.toLowerCase().includes(search.toLowerCase());
+const matchRole = filterRole === "All" || u.role === filterRole;
+return matchSearch && matchRole;
 });
 
   // ─── INVITE ───────────────────────────────────────────────────────────────
@@ -271,7 +270,7 @@ function AdminUsers() {
           <span style={s.searchIcon}>⌕</span>
           <input
             style={s.searchInput}
-            placeholder="Search by name or email…"
+            placeholder="Search by name, email or company…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -288,17 +287,7 @@ function AdminUsers() {
           ))}
         </div>
 
-        <div style={s.roleFilters}>
-  {["All", ...new Set(users.map(u => u.company).filter(Boolean))].map(c => (
-    <button
-      key={c}
-      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
-      onClick={() => setFilterCompany(c)}
-    >
-      {c === "All" ? "All Companies" : c}
-    </button>
-  ))}
-</div>
+          
       </div>
 
       {/* TABLE */}

@@ -73,7 +73,6 @@ function ViewUsers() {
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
-  const [filterCompany, setFilterCompany] = useState("All");
 
   // CREATE modal state
   const [showCreate,  setShowCreate]  = useState(false);
@@ -175,11 +174,11 @@ function ViewUsers() {
   // ── filtered list ─────────────────────────────────────────────────────────
   const filtered = users.filter(u => {
     const matchSearch = !search ||
-      u.email?.toLowerCase().includes(search.toLowerCase()) ||
-      u.username?.toLowerCase().includes(search.toLowerCase());
-    const matchRole = filterRole === "All" || u.role === filterRole;
-    const matchCompany = filterCompany === "All" || u.company === filterCompany;
-    return matchSearch && matchRole && matchCompany;
+  u.email?.toLowerCase().includes(search.toLowerCase()) ||
+  u.username?.toLowerCase().includes(search.toLowerCase()) ||
+  u.company_name?.toLowerCase().includes(search.toLowerCase());
+const matchRole = filterRole === "All" || u.role === filterRole;
+return matchSearch && matchRole;
 });
 
   // ── CREATE ────────────────────────────────────────────────────────────────
@@ -364,7 +363,7 @@ function ViewUsers() {
           <span style={s.searchIcon}>⌕</span>
           <input
             style={s.searchInput}
-            placeholder="Search by name or email…"
+            placeholder="Search by name, email or company…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
