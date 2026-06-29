@@ -73,6 +73,7 @@ function ViewUsers() {
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
+  const [filterCompany, setFilterCompany] = useState("All");
 
   // CREATE modal state
   const [showCreate,  setShowCreate]  = useState(false);
@@ -175,12 +176,11 @@ function ViewUsers() {
   const filtered = users.filter(u => {
     const matchSearch = !search ||
       u.email?.toLowerCase().includes(search.toLowerCase()) ||
-      u.username?.toLowerCase().includes(search.toLowerCase()) ||
-      u.company_name?.toLowerCase().includes(search.toLowerCase());
-
+      u.username?.toLowerCase().includes(search.toLowerCase());
     const matchRole = filterRole === "All" || u.role === filterRole;
-    return matchSearch && matchRole;
-  });
+    const matchCompany = filterCompany === "All" || u.company === filterCompany;
+    return matchSearch && matchRole && matchCompany;
+});
 
   // ── CREATE ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -370,16 +370,16 @@ function ViewUsers() {
           />
         </div>
         <div style={s.roleFilters}>
-          {["All", ...ALL_ROLES].map(r => (
-            <button
-              key={r}
-              style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
-              onClick={() => setFilterRole(r)}
-            >
-              {r === "All" ? "All Roles" : r}
-            </button>
-          ))}
-        </div>
+  {["All", ...allowedRoles].map(r => (
+    <button
+      key={r}
+      style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
+      onClick={() => setFilterRole(r)}
+    >
+      {r === "All" ? "All Roles" : r}
+    </button>
+  ))}
+</div>
       </div>
 
       {/* TABLE */}
