@@ -96,7 +96,7 @@ function AdminUsers() {
   // Fetches only users in THIS admin's hierarchy
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://187.127.180.107/users/my-hierarchy", {
+      const res = await fetch("http://194.164.149.22/api/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { navigate("/"); return; }
@@ -142,7 +142,7 @@ function AdminUsers() {
     setInviting(true);
     setInviteErr("");
     try {
-      const res = await fetch("http://187.127.180.107/users/create", {
+      const res = await fetch("http://194.164.149.22/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ email: inviteEmail, role: inviteRole })
@@ -187,7 +187,7 @@ function AdminUsers() {
       const body = { role: editRole, status: editStatus, send_reset: sendReset };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
       const res = await fetch(
-        `http://187.127.180.107/users/update/${editUser.username || editUser.user_id}`,
+        `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`,
   {
     method: "PUT",
     headers: {
@@ -212,7 +212,7 @@ function AdminUsers() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://187.127.180.107/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://194.164.149.22/api/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -229,7 +229,7 @@ function AdminUsers() {
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://187.127.180.107/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://194.164.149.22/api/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
