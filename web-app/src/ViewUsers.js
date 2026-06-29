@@ -53,10 +53,16 @@ function RoleBadge({ role }) {
   );
 }
 
+const ROLE_OPTIONS_BY_CURRENT_ROLE = {
+  "Company Admin": ["Admin"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 function ViewUsers() {
 
   const currentRole = localStorage.getItem("role");
+  const allowedRoles = ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [];
 
   const canEdit = (targetRole) => {
     if (currentRole === "Admin" && targetRole === "Company Admin") {
