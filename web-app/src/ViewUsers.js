@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 // ─── ROLE CONFIG ────────────────────────────────────────────────────────────
-const ALL_ROLES = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
 const SUPER_ADMIN_CREATE_ROLES = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆" },
@@ -184,7 +183,7 @@ function ViewUsers() {
       u.email?.toLowerCase().includes(search.toLowerCase()) ||
       u.username?.toLowerCase().includes(search.toLowerCase());
     const matchRole = filterRole === "All" || u.role === filterRole;
-    const matchCompany = filterCompany === "All" || u.company === filterCompany;
+    const matchCompany = filterCompany === "All" || u.company_name === filterCompany;
     return matchSearch && matchRole && matchCompany;
 });
 
@@ -383,6 +382,17 @@ function ViewUsers() {
       onClick={() => setFilterRole(r)}
     >
       {r === "All" ? "All Roles" : r}
+    </button>
+  ))}
+</div>
+      <div style={s.roleFilters}>
+  {["All", ...new Set(users.map(u => u.company_name).filter(Boolean))].map(c => (
+    <button
+      key={c}
+      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
+      onClick={() => setFilterCompany(c)}
+    >
+      {c === "All" ? "All Companies" : c}
     </button>
   ))}
 </div>
