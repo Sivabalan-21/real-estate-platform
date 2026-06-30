@@ -1,10 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Admin"],
-  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
-};
+const ALL_ROLES_FOR_FILTER = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
 
 const ROLE_META = {
   "Admin":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
@@ -276,7 +273,7 @@ return matchSearch && matchRole;
           />
         </div>
         <div style={s.roleFilters}>
-          {["All", ...allowedRoles].map(r => (
+          {["All", ...ALL_ROLES_FOR_FILTER].map(r => (
             <button
               key={r}
               style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
