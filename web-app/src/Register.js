@@ -262,7 +262,7 @@ function Register() {
             <div style={s.portalHint}>
               <p style={s.portalLabel}>Your company portal URL</p>
               <code style={s.portalUrl}>
-                localhost:3000/portal/{portalSlug}
+                194.164.149.22/portal/{portalSlug}
               </code>
               <p style={s.portalNote}>
                 Share this link with your team so they can log in directly.
@@ -324,7 +324,7 @@ function Register() {
               />
               {errors.companyName && <p style={s.errMsg}>{errors.companyName}</p>}
               <p style={s.fieldHint}>
-                This becomes your portal URL: <code>localhost:3000/portal/your-company-name</code>
+                This becomes your portal URL: <code>194.164.149.22/portal/your-company-name</code>
               </p>
 
               {/* Company Logo */}
