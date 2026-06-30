@@ -384,17 +384,6 @@ return matchSearch && matchRole;
     </button>
   ))}
 </div>
-      <div style={s.roleFilters}>
-  {["All", ...new Set(users.map(u => u.company_name).filter(Boolean))].map(c => (
-    <button
-      key={c}
-      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
-      onClick={() => setFilterCompany(c)}
-    >
-      {c === "All" ? "All Companies" : c}
-    </button>
-  ))}
-</div>
       </div>
 
       {/* TABLE */}
