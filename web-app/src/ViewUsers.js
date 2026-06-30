@@ -56,7 +56,11 @@ function RoleBadge({ role }) {
   "Company Admin": ["Admin"],
   "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
-const ALL_ROLES_FOR_FILTER = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
+const VISIBLE_ROLES_BY_CURRENT_ROLE = {
+  "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 function ViewUsers() {
@@ -375,7 +379,7 @@ return matchSearch && matchRole;
           />
         </div>
         <div style={s.roleFilters}>
-  {["All", ...(currentRole === "Super Admin" ? ALL_ROLES_FOR_FILTER : allowedRoles)].map(r => (
+  {["All", ...(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || [])].map(r => (
     <button
       key={r}
       style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}

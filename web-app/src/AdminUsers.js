@@ -5,7 +5,11 @@ const ROLE_OPTIONS_BY_CURRENT_ROLE = {
   "Company Admin": ["Admin"],
   "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
-const ALL_ROLES_FOR_FILTER = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
+const VISIBLE_ROLES_BY_CURRENT_ROLE = {
+  "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
 const ROLE_META = {
   "Admin":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
   "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
@@ -276,7 +280,7 @@ return matchSearch && matchRole;
           />
         </div>
         <div style={s.roleFilters}>
-          {["All", ...(currentRole === "Super Admin" ? ALL_ROLES_FOR_FILTER : allowedRoles)].map(r => (
+          {["All", ...(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || [])].map(r => (
             <button
               key={r}
               style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
