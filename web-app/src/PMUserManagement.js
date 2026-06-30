@@ -32,7 +32,7 @@ function PMUserManagement() {
   const handleDelete = async (userId) => {
     if (!window.confirm("Delete this user?")) return;
 
-    await fetch(`http://187.127.180.107/users/delete/${userId}`, {
+    await fetch(`http://194.164.149.22/api/users/delete/${userId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` }
     });
