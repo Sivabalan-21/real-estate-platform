@@ -6,7 +6,7 @@ function PMUserManagement() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://187.127.180.107/users", {
+      const res = await fetch("http://194.164.149.22/api/users", {
         headers: { Authorization: `Bearer ${token}` }
       });
 
