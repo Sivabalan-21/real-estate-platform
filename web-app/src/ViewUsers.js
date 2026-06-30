@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 // ─── ROLE CONFIG ────────────────────────────────────────────────────────────
-const ALL_ROLES = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
 const SUPER_ADMIN_CREATE_ROLES = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆" },
@@ -53,10 +52,16 @@ function RoleBadge({ role }) {
   );
 }
 
+const ROLE_OPTIONS_BY_CURRENT_ROLE = {
+  "Company Admin": ["Admin"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 function ViewUsers() {
 
   const currentRole = localStorage.getItem("role");
+  const allowedRoles = ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [];
 
   const canEdit = (targetRole) => {
     if (currentRole === "Admin" && targetRole === "Company Admin") {
@@ -73,6 +78,7 @@ function ViewUsers() {
   const [search,     setSearch]     = useState("");
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
+  const [filterCompany, setFilterCompany] = useState("All");
 
   // CREATE modal state
   const [showCreate,  setShowCreate]  = useState(false);
@@ -105,7 +111,7 @@ function ViewUsers() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/users/my-hierarchy", {
+      const res = await fetch("http://194.164.149.22/api/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { 
@@ -150,7 +156,7 @@ function ViewUsers() {
       }, 30000);
     }
 
-    fetch("http://localhost:8000/companies", {
+    fetch("http://194.164.149.22/api/companies", {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -174,11 +180,11 @@ function ViewUsers() {
   // ── filtered list ─────────────────────────────────────────────────────────
   const filtered = users.filter(u => {
     const matchSearch = !search ||
-  u.email?.toLowerCase().includes(search.toLowerCase()) ||
-  u.username?.toLowerCase().includes(search.toLowerCase()) ||
-  u.company_name?.toLowerCase().includes(search.toLowerCase());
-const matchRole = filterRole === "All" || u.role === filterRole;
-return matchSearch && matchRole;
+      u.email?.toLowerCase().includes(search.toLowerCase()) ||
+      u.username?.toLowerCase().includes(search.toLowerCase());
+    const matchRole = filterRole === "All" || u.role === filterRole;
+    const matchCompany = filterCompany === "All" || u.company_name === filterCompany;
+    return matchSearch && matchRole && matchCompany;
 });
 
   // ── CREATE ────────────────────────────────────────────────────────────────
@@ -198,7 +204,7 @@ return matchSearch && matchRole;
     setCreating(true);
     setCreateErr("");
     try {
-      const res = await fetch("http://localhost:8000/users/create", {
+      const res = await fetch("http://194.164.149.22/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -256,7 +262,7 @@ return matchSearch && matchRole;
       };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
 
-      const url = `http://localhost:8000/users/update/${editUser.username || editUser.user_id}`;
+      const url = `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`;
 
       const res = await fetch(url, {
         method: "PUT",
@@ -294,7 +300,7 @@ return matchSearch && matchRole;
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://localhost:8000/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://194.164.149.22/api/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -321,7 +327,7 @@ return matchSearch && matchRole;
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://localhost:8000/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://194.164.149.22/api/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -363,7 +369,7 @@ return matchSearch && matchRole;
           <span style={s.searchIcon}>⌕</span>
           <input
             style={s.searchInput}
-            placeholder="Search by name, email or company…"
+            placeholder="Search by name or email…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -376,6 +382,17 @@ return matchSearch && matchRole;
       onClick={() => setFilterRole(r)}
     >
       {r === "All" ? "All Roles" : r}
+    </button>
+  ))}
+</div>
+      <div style={s.roleFilters}>
+  {["All", ...new Set(users.map(u => u.company_name).filter(Boolean))].map(c => (
+    <button
+      key={c}
+      style={{ ...s.filterBtn, ...(filterCompany === c ? s.filterActive : {}) }}
+      onClick={() => setFilterCompany(c)}
+    >
+      {c === "All" ? "All Companies" : c}
     </button>
   ))}
 </div>
