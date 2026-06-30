@@ -6,9 +6,7 @@ const ROLE_OPTIONS_BY_CURRENT_ROLE = {
   "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
 const ALL_ROLES_FOR_FILTER = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
-const ROLE_META = {git add .
-git commit -m "Restore ROLE_OPTIONS_BY_CURRENT_ROLE alongside ALL_ROLES_FOR_FILTER"
-git push
+const ROLE_META = {
   "Admin":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
   "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
   "Tenant":           { color: "#10b981", bg: "#d1fae5", icon: "🏠" },
