@@ -375,7 +375,7 @@ return matchSearch && matchRole;
           />
         </div>
         <div style={s.roleFilters}>
-  {["All", ...ALL_ROLES_FOR_FILTER].map(r => (
+  {["All", ...(currentRole === "Super Admin" ? ALL_ROLES_FOR_FILTER : allowedRoles)].map(r => (
     <button
       key={r}
       style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
