@@ -38,7 +38,7 @@ def _make_company_code(db: Session, name: str) -> str:
 def _make_slug(db: Session, name: str) -> str:
     """Convert company name to a URL-safe slug, e.g. 'PropTech Solutions' -> 'proptech-solutions'.
     Appends a short random suffix if the slug is already taken."""
-    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    base = name.strip().lower()
     if not db.query(Company).filter(Company.slug == base).first():
         return base
     for _ in range(10):
