@@ -125,10 +125,6 @@ export default function CompanyPortal() {
             <h2 style={s.brandTitle}>Welcome to<br />{portal.company_name}</h2>
             <p style={s.brandSub}>Your property management workspace. Sign in to continue.</p>
           </div>
-
-          
-          
-          </div>
         </div>
 
         {/* Right form panel */}
