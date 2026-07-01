@@ -213,9 +213,9 @@ export default function CompanyPortal() {
 }
 
 const s = {
-  page:           { minHeight: "100vh", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'DM Sans', system-ui, sans-serif" },
-  card:           { width: "100%", maxWidth: 820, display: "flex", borderRadius: 20, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,0.12)", border: "1px solid #e2e8f0" },
-  brand:          { width: "42%", padding: "2.5rem 2rem", display: "flex", flexDirection: "column", justifyContent: "space-between", position: "relative", overflow: "hidden" },
+  page: { height: "100vh", background: "#f1f5f9", display: "flex", fontFamily: "'DM Sans', system-ui, sans-serif" },
+  card: { width: "100%", display: "flex", borderRadius: 0, overflow: "hidden" },
+  brand: { width: "42%", padding: "2.5rem 2rem", display: "flex", flexDirection: "column", justifyContent: "space-between", position: "relative", overflow: "hidden" },
   circle1:        { position: "absolute", width: 220, height: 220, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.12)", top: -70, right: -70 },
   circle2:        { position: "absolute", width: 150, height: 150, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.08)", top: -20, right: -20 },
   circle3:        { position: "absolute", width: 190, height: 190, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.08)", bottom: -60, left: -60 },
@@ -232,7 +232,7 @@ const s = {
   trustRow:       { display: "flex", alignItems: "center", gap: 8 },
   trustIcon:      { fontSize: 13 },
   trustText:      { color: "rgba(255,255,255,0.65)", fontSize: 12 },
-  formPanel:      { flex: 1, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: "2.5rem 2rem" },
+  formPanel: { flex: 1, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: "2.5rem 2rem" },
   formInner:      { width: "100%", maxWidth: 300 },
   formTitle:      { fontSize: 20, fontWeight: 700, color: "#0f172a", margin: "0 0 4px" },
   formSub:        { fontSize: 13, color: "#94a3b8", margin: "0 0 1.75rem" },
