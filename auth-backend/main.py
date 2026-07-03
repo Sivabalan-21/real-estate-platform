@@ -417,13 +417,12 @@ Best regards,
 PropOS Team
 """
     await send_email(user.email, "Welcome to PropOS — Your Login Details", welcome_body)
-    return 
-    {{
+    return {
         "message":      "Registration complete",
         "company_name": user.company.name if user.company else None,
         "company_code": user.company.company_code if user.company else None,
         "company_slug": company_slug,
-    }}
+    }
 
 
 @app.get("/auth/validate-token/{token}")
