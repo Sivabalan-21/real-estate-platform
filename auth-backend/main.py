@@ -397,14 +397,33 @@ def get_register_info(token: str, db: Session = Depends(get_db)):
 
 
 @app.post("/complete-registration/{token}")
-def complete_registration_route(token: str, data: dict, db: Session = Depends(get_db)):
+async def complete_registration_route(token: str, data: dict, db: Session = Depends(get_db)):
     user = complete_registration(db, token, data)
-    return {
+    company_slug = user.company.slug if user.company else None
+    portal_url = f"{FRONTEND_URL}/portal/{company_slug}" if company_slug else FRONTEND_URL
+    welcome_body = f"""
+Hello {user.username},
+
+Your account has been successfully created. Here are your login details:
+
+Username : {user.username}
+Password : {data.get("password", "")}
+Role     : {user.role}
+Portal   : {portal_url}
+
+Please keep this information safe and do not share your password with anyone.
+
+Best regards,
+PropOS Team
+"""
+    await send_email(user.email, "Welcome to PropOS — Your Login Details", welcome_body)
+    return 
+    {{
         "message":      "Registration complete",
         "company_name": user.company.name if user.company else None,
         "company_code": user.company.company_code if user.company else None,
-        "company_slug": user.company.slug if user.company else None,
-    }
+        "company_slug": company_slug,
+    }}
 
 
 @app.get("/auth/validate-token/{token}")
