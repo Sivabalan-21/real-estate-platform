@@ -12,6 +12,16 @@ const ROLE_META = {
   "Owner":            { color: "#ec4899", bg: "#fce7f3", icon: "👑" },
 };
 
+const ROLE_OPTIONS_BY_CURRENT_ROLE = {
+  "Company Admin": ["Admin"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
+const VISIBLE_ROLES_BY_CURRENT_ROLE = {
+  "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Admin"],
+  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+};
+
 // ─── MODAL ───────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -30,9 +40,9 @@ function Modal({ title, onClose, children }) {
 // ─── STATUS BADGE ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }) {
   const map = {
-    active:   { bg: "#d1fae5", color: "#065f46", label: "Active"   },
-    invited:  { bg: "#e0f2fe", color: "#075985", label: "Invited"  },
-    suspended:{ bg: "#fee2e2", color: "#991b1b", label: "Suspended" },
+    active:    { bg: "#d1fae5", color: "#065f46", label: "Active"    },
+    invited:   { bg: "#e0f2fe", color: "#075985", label: "Invited"   },
+    suspended: { bg: "#fee2e2", color: "#991b1b", label: "Suspended" },
   };
   const cfg = map[status] || map.invited;
   return (
@@ -52,28 +62,16 @@ function RoleBadge({ role }) {
   );
 }
 
-  const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Admin"],
-  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
-};
-const VISIBLE_ROLES_BY_CURRENT_ROLE = {
-  "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Admin"],
-  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
-};
-
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 function ViewUsers() {
 
-  const currentRole = localStorage.getItem("role");
+  const currentRole  = localStorage.getItem("role");
   const allowedRoles = ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [];
 
   const canEdit = (targetRole) => {
-    if (currentRole === "Admin" && targetRole === "Company Admin") {
-    return false;
-  }
-  return true;
-};
+    if (currentRole === "Admin" && targetRole === "Company Admin") return false;
+    return true;
+  };
 
   const navigate = useNavigate();
   const token    = localStorage.getItem("token");
@@ -85,23 +83,25 @@ function ViewUsers() {
   const [toast,      setToast]      = useState(null);
 
   // CREATE modal state
-  const [showCreate,  setShowCreate]  = useState(false);
-  const [createEmail, setCreateEmail] = useState("");
+  const [showCreate,        setShowCreate]        = useState(false);
+  const [createEmail,       setCreateEmail]       = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
-  const [companies, setCompanies] = useState([]);
-  const [createRole,  setCreateRole]  = useState("Company Admin");
-  const [creating,    setCreating]    = useState(false);
-  const [createErr,   setCreateErr]   = useState("");
+  const [companies,         setCompanies]         = useState([]);
+  const [createRole,        setCreateRole]        = useState("Company Admin");
+  const [creating,          setCreating]          = useState(false);
+  const [createErr,         setCreateErr]         = useState("");
 
   // EDIT modal state
-  const [editUser,           setEditUser]           = useState(null);
-  const [editRole,           setEditRole]           = useState("");
-  const [editStatus,         setEditStatus]         = useState("");
-  const [editEmail,          setEditEmail]          = useState("");
-  const [editSendReset,      setEditSendReset]      = useState(false);
-  const [editErr,            setEditErr]            = useState("");
-  const [editing,            setEditing]            = useState(false);
-  const [showDangerZone,     setShowDangerZone]     = useState(false);
+  const [editUser,       setEditUser]       = useState(null);
+  const [editRole,       setEditRole]       = useState("");
+  const [editStatus,     setEditStatus]     = useState("");
+  const [editEmail,      setEditEmail]      = useState("");
+  const [editSendReset,  setEditSendReset]  = useState(false);
+  const [editErr,        setEditErr]        = useState("");
+  const [editing,        setEditing]        = useState(false);
+  const [editLogo,       setEditLogo]       = useState(null);
+  const [logoUploading,  setLogoUploading]  = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
 
   // DELETE confirm state
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -118,93 +118,65 @@ function ViewUsers() {
       const res = await fetch("http://194.164.149.22/api/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.status === 401) { 
-        navigate("/"); 
-        return; 
-      }
-      if (!res.ok) {
-        return; // don't logout on 403/500 — just skip
-      }
+      if (res.status === 401) { navigate("/"); return; }
+      if (!res.ok) return;
       const data = await res.json();
       setUsers(Array.isArray(data) ? data : []);
     } catch {
       showToast("Failed to fetch users", "error");
-      // no navigate() here — network error ≠ logout
     } finally {
       setLoading(false);
     }
   }, [token, navigate]);
 
-  useEffect(() => { 
-    // Detect if another tab clears localStorage (logout/session wipe)
+  useEffect(() => {
     const handleStorageChange = (e) => {
-      if (e.key === "token" && !e.newValue) {
-        // Token was removed in another tab — don't auto-logout this tab
-        // Just stop polling, the user is still active here
-      }
+      if (e.key === "token" && !e.newValue) {}
     };
     window.addEventListener("storage", handleStorageChange);
 
     fetchUsers();
 
-    // ── AUTO-REFRESH ──────────────────────────────────────────────────────
-    // Only poll on the Super Admin screen — other roles must not be affected.
     let interval = null;
     if (currentRole === "Super Admin") {
       interval = setInterval(() => {
-        // Only poll if this tab is currently active
-        // Prevents background tabs from triggering state changes
-        if (!document.hidden) {
-          fetchUsers();
-        }
+        if (!document.hidden) fetchUsers();
       }, 30000);
     }
 
     fetch("http://194.164.149.22/api/companies", {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
+      headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())
       .then(data => {
-  if (Array.isArray(data)) {
-    setCompanies(data);
-  } else {
-    setCompanies([]);
-  }
-})
-    // Clear the interval when the component unmounts (only set for Super Admin)
-    return () => { 
+        if (Array.isArray(data)) setCompanies(data);
+        else setCompanies([]);
+      });
+
+    return () => {
       if (interval) clearInterval(interval);
       window.removeEventListener("storage", handleStorageChange);
     };
-
-  }, [fetchUsers, navigate, token,currentRole]);
+  }, [fetchUsers, navigate, token, currentRole]);
 
   // ── filtered list ─────────────────────────────────────────────────────────
   const filtered = users.filter(u => {
     const matchSearch = !search ||
-  u.email?.toLowerCase().includes(search.toLowerCase()) ||
-  u.username?.toLowerCase().includes(search.toLowerCase()) ||
-  u.company_name?.toLowerCase().includes(search.toLowerCase());
-const matchRole = filterRole === "All" || u.role === filterRole;
-return matchSearch && matchRole;
-});
+      u.email?.toLowerCase().includes(search.toLowerCase()) ||
+      u.username?.toLowerCase().includes(search.toLowerCase()) ||
+      u.company_name?.toLowerCase().includes(search.toLowerCase());
+    const matchRole = filterRole === "All" || u.role === filterRole;
+    return matchSearch && matchRole;
+  });
 
   // ── CREATE ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!createEmail.trim()) { setCreateErr("Email is required"); return; }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(createEmail)) { setCreateErr("Enter a valid email address"); return; }
-    if (
-      createRole !== "Company Admin" &&
-      currentRole === "Super Admin" &&
-      !selectedCompanyId
-    ) {
-      setCreateErr("Please select a company");
-      return;
+    if (createRole !== "Company Admin" && currentRole === "Super Admin" && !selectedCompanyId) {
+      setCreateErr("Please select a company"); return;
     }
-
     setCreating(true);
     setCreateErr("");
     try {
@@ -218,16 +190,11 @@ return matchSearch && matchRole;
         })
       });
       const data = await res.json();
-
       if (!res.ok) {
-        if (Array.isArray(data.detail)) {
-          setCreateErr(data.detail[0]?.msg || "Validation error");
-        } else {
-          setCreateErr(data.detail || "Failed to send invite");
-        }
+        if (Array.isArray(data.detail)) setCreateErr(data.detail[0]?.msg || "Validation error");
+        else setCreateErr(data.detail || "Failed to send invite");
         return;
       }
-
       showToast(`Invite sent to ${createEmail}`);
       setShowCreate(false);
       setCreateEmail("");
@@ -250,6 +217,32 @@ return matchSearch && matchRole;
     setEditSendReset(false);
     setEditErr("");
     setShowDangerZone(false);
+    setEditLogo(null);
+  };
+
+  const handleLogoUpload = async () => {
+    if (!editLogo) return;
+    setLogoUploading(true);
+    const formData = new FormData();
+    formData.append("file", editLogo);
+    try {
+      const res = await fetch("http://194.164.149.22/api/company/upload-logo", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Logo uploaded successfully");
+        setEditLogo(null);
+      } else {
+        showToast(data.detail || "Logo upload failed", "error");
+      }
+    } catch {
+      showToast("Server error. Please try again.", "error");
+    } finally {
+      setLogoUploading(false);
+    }
   };
 
   const handleEdit = async () => {
@@ -267,7 +260,6 @@ return matchSearch && matchRole;
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
 
       const url = `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`;
-
       const res = await fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -276,16 +268,12 @@ return matchSearch && matchRole;
 
       if (!res.ok) {
         const data = await res.json();
-
-        // Only force-logout on 401 (token expired/invalid)
         if (res.status === 401) {
           const companySlug = localStorage.getItem("company_slug");
           localStorage.clear();
           navigate(companySlug ? `/portal/${companySlug}` : "/");
           return;
         }
-
-        // For 400/403/404 — show the error message, DO NOT logout
         setEditErr(data.detail || "Failed to update user");
         return;
       }
@@ -309,17 +297,11 @@ return matchSearch && matchRole;
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-
         const data = await res.json();
-
-  showToast(
-    data.detail || "Delete failed",
-    "error"
-  );
-
-  return;
-}
-      showToast(`User deleted`);
+        showToast(data.detail || "Delete failed", "error");
+        return;
+      }
+      showToast("User deleted");
       setDeleteTarget(null);
       fetchUsers();
     } catch {
@@ -379,16 +361,16 @@ return matchSearch && matchRole;
           />
         </div>
         <div style={s.roleFilters}>
-  {["All", ...(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || [])].map(r => (
-    <button
-      key={r}
-      style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
-      onClick={() => setFilterRole(r)}
-    >
-      {r === "All" ? "All Roles" : r}
-    </button>
-  ))}
-</div>
+          {["All", ...(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || [])].map(r => (
+            <button
+              key={r}
+              style={{ ...s.filterBtn, ...(filterRole === r ? s.filterActive : {}) }}
+              onClick={() => setFilterRole(r)}
+            >
+              {r === "All" ? "All Roles" : r}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* TABLE */}
@@ -425,54 +407,31 @@ return matchSearch && matchRole;
                     </div>
                   </td>
                   <td style={s.td}><RoleBadge role={u.role} /></td>
-
+                  <td style={s.td}><StatusBadge status={u.status || "invited"} /></td>
                   <td style={s.td}>
-                    <StatusBadge status={u.status || "invited"} />
+                    {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                   </td>
-
-                  <td style={s.td}>
-                    {u.created_at
-    ? new Date(u.created_at).toLocaleDateString()
-    : "—"}
-</td>
-
-                  <td style={s.td}>
-                    {u.company_name || "—"}
-                  </td>
-
+                  <td style={s.td}>{u.company_name || "—"}</td>
                   <td style={s.td}>
                     {u.company_code
                       ? <span style={s.codeChip}>{u.company_code}</span>
                       : <span style={{ color: "#94a3b8" }}>—</span>
                     }
                   </td>
-                  
                   <td style={{ ...s.td, textAlign: "right" }}>
                     <div style={s.actionsCell}>
                       {u.status === "invited" && (
-                        <button 
-                          style={s.resendBtn} 
-                          onClick={() => handleResendRegistration(u)}
-                          title="Resend invitation email"
-                        >
+                        <button style={s.resendBtn} onClick={() => handleResendRegistration(u)} title="Resend invitation email">
                           Resend
                         </button>
                       )}
                       {canEdit(u.role) && (
-                        <button 
-                          style={s.editBtn} 
-                          onClick={() => openEdit(u)}
-                          title="Edit user details"
-                        >
+                        <button style={s.editBtn} onClick={() => openEdit(u)} title="Edit user details">
                           Edit
                         </button>
                       )}
                       {canEdit(u.role) && (
-                        <button 
-                          style={s.deleteBtn} 
-                          onClick={() => setDeleteTarget(u)}
-                          title="Delete user"
-                        >
+                        <button style={s.deleteBtn} onClick={() => setDeleteTarget(u)} title="Delete user">
                           Delete
                         </button>
                       )}
@@ -504,41 +463,21 @@ return matchSearch && matchRole;
               {SUPER_ADMIN_CREATE_ROLES.map(r => <option key={r}>{r}</option>)}
             </select>
 
-           {createRole !== "Company Admin" && (
-  <>
-    <label style={ms.label}>
-      Select Company <span style={ms.req}>*</span>
-    </label>
-
-    <select
-      style={{
-        ...ms.input,
-        ...(String(createErr).toLowerCase().includes("company")
-          ? ms.inputErr
-          : {})
-      }}
-      value={selectedCompanyId}
-      onChange={(e) => {
-        setSelectedCompanyId(e.target.value);
-        setCreateErr("");
-      }}
-    >
-      <option value="">
-        Choose company
-      </option>
-
-      {Array.isArray(companies) &&
-        companies.map((c) => (
-        <option
-          key={c.id}
-          value={c.id}
-        >
-          {c.name}
-        </option>
-      ))}
-    </select>
-  </>
-)}
+            {createRole !== "Company Admin" && (
+              <>
+                <label style={ms.label}>Select Company <span style={ms.req}>*</span></label>
+                <select
+                  style={{ ...ms.input, ...(String(createErr).toLowerCase().includes("company") ? ms.inputErr : {}) }}
+                  value={selectedCompanyId}
+                  onChange={e => { setSelectedCompanyId(e.target.value); setCreateErr(""); }}
+                >
+                  <option value="">Choose company</option>
+                  {Array.isArray(companies) && companies.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
 
             {createErr && <p style={ms.errorMsg}>{createErr}</p>}
 
@@ -566,42 +505,72 @@ return matchSearch && matchRole;
               onChange={e => { setEditEmail(e.target.value); setEditErr(""); }}
             />
 
-            {/* ── Access & Role ── */}
+            {/* ── Role ── */}
             <label style={ms.label}>Role</label>
             <select style={ms.input} value={editRole} onChange={e => setEditRole(e.target.value)}>
               {SUPER_ADMIN_CREATE_ROLES.map(r => <option key={r}>{r}</option>)}
             </select>
 
+            {/* ── Status ── */}
             <label style={ms.label}>Status</label>
             <select style={ms.input} value={editStatus} onChange={e => setEditStatus(e.target.value)}>
               <option value="invited">Invited</option>
               <option value="active">Active</option>
               <option value="suspended">Suspended</option>
             </select>
-            {/* ── Security Action ── */}
-<label style={{ ...ms.label, marginTop: 4 }}>Security</label>
 
-<div style={ms.checkGroup}>
-  <label style={ms.checkRow}>
-    <input
-      type="checkbox"
-      checked={editSendReset}
-      onChange={(e) => setEditSendReset(e.target.checked)}
-      style={ms.checkbox}
-    />
-    <span style={ms.checkText}>
-      <strong>Send password reset link</strong>
-      <small>User will receive email to reset password</small>
-    </span>
-  </label>
-</div>
+            {/* ── Logo Upload (Company Admin only) ── */}
+            {editUser.role === "Company Admin" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...ms.label, marginTop: 4 }}>Company Logo</label>
+                <div style={ms.logoWrap}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => setEditLogo(e.target.files[0])}
+                    style={{ fontSize: 13, flex: 1 }}
+                  />
+                  <button
+                    style={{
+                      ...ms.submitBtn,
+                      padding: "8px 14px",
+                      opacity: logoUploading || !editLogo ? 0.5 : 1,
+                      cursor: logoUploading || !editLogo ? "not-allowed" : "pointer",
+                    }}
+                    onClick={handleLogoUpload}
+                    disabled={logoUploading || !editLogo}
+                  >
+                    {logoUploading ? "Uploading…" : "Upload"}
+                  </button>
+                </div>
+                {editLogo && (
+                  <p style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
+                    Selected: {editLogo.name}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Security ── */}
+            <label style={{ ...ms.label, marginTop: 4 }}>Security</label>
+            <div style={ms.checkGroup}>
+              <label style={ms.checkRow}>
+                <input
+                  type="checkbox"
+                  checked={editSendReset}
+                  onChange={e => setEditSendReset(e.target.checked)}
+                  style={ms.checkbox}
+                />
+                <span style={ms.checkText}>
+                  <strong>Send password reset link</strong>
+                  <small>User will receive email to reset password</small>
+                </span>
+              </label>
+            </div>
 
             {/* ── Danger Zone ── */}
             <div style={ms.dangerZoneWrap}>
-              <button
-                style={ms.dangerZoneToggle}
-                onClick={() => setShowDangerZone(p => !p)}
-              >
+              <button style={ms.dangerZoneToggle} onClick={() => setShowDangerZone(p => !p)}>
                 {showDangerZone ? "▲" : "▼"} Danger Zone
               </button>
               {showDangerZone && (
@@ -609,10 +578,7 @@ return matchSearch && matchRole;
                   <p style={ms.dangerZoneDesc}>
                     Deleting <strong>{editUser.username || editUser.email}</strong> is permanent and cannot be undone.
                   </p>
-                  <button
-                    style={ms.dangerBtn}
-                    onClick={() => { setEditUser(null); setDeleteTarget(editUser); }}
-                  >
+                  <button style={ms.dangerBtn} onClick={() => { setEditUser(null); setDeleteTarget(editUser); }}>
                     Delete this user
                   </button>
                 </div>
@@ -677,33 +643,33 @@ const s = {
   userName:    { margin: 0, fontWeight: 600, color: "#0f172a", fontSize: 13 },
   userEmail:   { margin: "2px 0 0", color: "#64748b", fontSize: 12 },
   badge:       { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 },
-  date:        { color: "#64748b", fontSize: 12 },
   actionsCell: { display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center" },
-  editBtn:     { background: "#ede9fe", color: "#6366f1", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, transition: "all 0.2s" },
-  resendBtn:   { background: "#e0f2fe", color: "#0369a1", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, transition: "all 0.2s" },
-  deleteBtn:   { background: "#fee2e2", color: "#ef4444", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, transition: "all 0.2s" },
+  editBtn:     { background: "#ede9fe", color: "#6366f1", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
+  resendBtn:   { background: "#e0f2fe", color: "#0369a1", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
+  deleteBtn:   { background: "#fee2e2", color: "#ef4444", border: "none", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
   empty:       { padding: 40, textAlign: "center", color: "#94a3b8", fontSize: 14 },
   codeChip:    { display: "inline-block", padding: "2px 8px", borderRadius: 4, background: "#f1f5f9", color: "#334155", fontFamily: "monospace", fontSize: 12, fontWeight: 700, letterSpacing: 0.5, border: "1px solid #e2e8f0" },
   toast:       { position: "fixed", top: 20, right: 20, color: "#fff", padding: "12px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,.15)" },
 };
 
 const ms = {
-  overlay:   { position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
-  box:       { background: "#fff", borderRadius: 12, width: 420, boxShadow: "0 20px 60px rgba(0,0,0,.2)", overflow: "hidden" },
-  header:    { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: "1px solid #f1f5f9" },
-  title:     { margin: 0, fontSize: 16, fontWeight: 700, color: "#0f172a" },
-  close:     { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8", lineHeight: 1 },
-  body:      { padding: 24 },
-  label:     { display: "block", fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6, textTransform: "uppercase", letterSpacing: .5 },
-  req:       { color: "#ef4444" },
-  input:     { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, marginBottom: 16, outline: "none", boxSizing: "border-box" },
-  inputErr:  { borderColor: "#ef4444" },
-  errorMsg:  { color: "#ef4444", fontSize: 12, marginBottom: 12 },
-  deleteMsg: { color: "#475569", fontSize: 14, lineHeight: 1.6, marginBottom: 20 },
-  footer:    { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 },
-  cancelBtn: { background: "#f1f5f9", color: "#475569", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  submitBtn: { background: "#6366f1", color: "#fff", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  overlay:         { position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  box:             { background: "#fff", borderRadius: 12, width: 420, boxShadow: "0 20px 60px rgba(0,0,0,.2)", overflow: "hidden" },
+  header:          { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: "1px solid #f1f5f9" },
+  title:           { margin: 0, fontSize: 16, fontWeight: 700, color: "#0f172a" },
+  close:           { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8", lineHeight: 1 },
+  body:            { padding: 24 },
+  label:           { display: "block", fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6, textTransform: "uppercase", letterSpacing: .5 },
+  req:             { color: "#ef4444" },
+  input:           { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, marginBottom: 16, outline: "none", boxSizing: "border-box" },
+  inputErr:        { borderColor: "#ef4444" },
+  errorMsg:        { color: "#ef4444", fontSize: 12, marginBottom: 12 },
+  deleteMsg:       { color: "#475569", fontSize: 14, lineHeight: 1.6, marginBottom: 20 },
+  footer:          { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 },
+  cancelBtn:       { background: "#f1f5f9", color: "#475569", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  submitBtn:       { background: "#6366f1", color: "#fff", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   dangerBtn:       { background: "#ef4444", color: "#fff", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  logoWrap:        { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc" },
   checkGroup:      { display: "flex", flexDirection: "column", gap: 10, marginBottom: 16, padding: "12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" },
   checkRow:        { display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" },
   checkbox:        { marginTop: 3, accentColor: "#6366f1", width: 15, height: 15, flexShrink: 0 },
