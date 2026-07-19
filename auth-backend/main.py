@@ -29,7 +29,7 @@ from services.user_service import (
     update_user as update_user_service,
     visible_users,
 )
-from tokens import ALGORITHM, SECRET_KEY, create_access_token
+from tokens import ALGORITHM, SECRET_KEY, create_access_token, create_reset_token, is_token_expired
 import shutil
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -142,6 +142,25 @@ async def send_email(email: str, subject: str, body: str):
     fm = FastMail(conf)
     await fm.send_message(message)
 
+async def send_logo_upload_email(email: str, link: str, username: str, company_name: str):
+    subject = "Upload Your Company Logo — PropOS"
+    body = f"""
+Hi {username},
+
+You have been requested to upload a logo for {company_name}.
+
+Click the link below to upload your company logo:
+{link}
+
+This link expires in 30 minutes.
+
+If you did not expect this, ignore this email.
+
+Regards,
+Property Portal Team
+"""
+    await send_email(email, subject, body)
+
 
 @app.get("/")
 def home():
@@ -244,7 +263,7 @@ def get_my_users(
     elif user.role == "Company Admin":
         users = db.query(User).filter(
             User.company_id == user.company_id,
-            User.role != "Company Admin"
+            User.role == "Admin"
         ).all()
 
     elif user.role == "Admin":
@@ -541,3 +560,84 @@ async def upload_logo(
         "message": "Logo uploaded successfully",
         "logo": company.logo
     }
+
+@app.post("/company/send-logo-upload-link/{username}")
+async def send_logo_upload_link(
+    username: str,
+    db: Session = Depends(get_db),
+    user=Depends(current_user)
+):
+    if user.role != "Super Admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    company_admin = db.query(User).filter(
+        User.username == username,
+        User.role     == "Company Admin"
+    ).first()
+
+    if not company_admin:
+        raise HTTPException(status_code=404, detail="Company Admin not found")
+
+    token, expiry = create_reset_token()
+    company_admin.reset_token  = token
+    company_admin.token_type   = "logo_upload"
+    company_admin.token_expiry = expiry
+    db.commit()
+
+    company = db.query(Company).filter(Company.id == company_admin.company_id).first()
+    upload_link = f"{FRONTEND_URL}/upload-logo/{token}"
+
+    try:
+        await send_logo_upload_email(
+            company_admin.email,
+            upload_link,
+            company_admin.username or company_admin.email.split("@")[0],
+            company.name if company else "Your Company",
+        )
+    except Exception as exc:
+        print("LOGO EMAIL ERROR:", exc)
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
+    return {"message": "Logo upload link sent successfully"}
+
+
+@app.post("/company/upload-logo-by-token/{token}")
+async def upload_logo_by_token(
+    token: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    # Find user by token
+    user = db.query(User).filter(
+        User.reset_token == token,
+        User.token_type  == "logo_upload",
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    if is_token_expired(user.token_expiry):
+        raise HTTPException(status_code=400, detail="This link has expired")
+
+    # Save the file
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    ext      = os.path.splitext(file.filename)[1]
+    filename = f"company_{user.company_id}{ext}"
+    filepath = os.path.join(upload_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+
+    # Update company logo path and clear token
+    company = db.query(Company).filter(Company.id == user.company_id).first()
+    if company:
+        company.logo = f"/uploads/{filename}"
+        db.commit()
+
+    user.reset_token  = None
+    user.token_type   = None
+    user.token_expiry = None
+    db.commit()
+
+    return {"message": "Logo uploaded successfully"}
