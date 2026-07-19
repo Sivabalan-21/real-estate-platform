@@ -66,7 +66,7 @@ function RoleBadge({ role }) {
 function ViewUsers() {
 
   const currentRole  = localStorage.getItem("role");
-  const allowedRoles = ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [];
+  
 
   const canEdit = (targetRole) => {
     if (currentRole === "Admin" && targetRole === "Company Admin") return false;
@@ -99,7 +99,6 @@ function ViewUsers() {
   const [editSendReset,  setEditSendReset]  = useState(false);
   const [editErr,        setEditErr]        = useState("");
   const [editing,        setEditing]        = useState(false);
-  const [editLogo,       setEditLogo]       = useState(null);
   const [logoUploading,  setLogoUploading]  = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
 
