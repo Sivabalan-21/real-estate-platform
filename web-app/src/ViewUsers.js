@@ -221,22 +221,17 @@ function ViewUsers() {
   };
 
   const handleLogoUpload = async () => {
-    if (!editLogo) return;
     setLogoUploading(true);
-    const formData = new FormData();
-    formData.append("file", editLogo);
     try {
-      const res = await fetch("http://194.164.149.22/api/company/upload-logo", {
+      const res = await fetch(`http://194.164.149.22/api/company/send-logo-upload-link/${editUser.username}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
-        body: formData,
       });
       const data = await res.json();
       if (res.ok) {
-        showToast("Logo uploaded successfully");
-        setEditLogo(null);
+        showToast("Logo upload link sent to Company Admin's email");
       } else {
-        showToast(data.detail || "Logo upload failed", "error");
+        showToast(data.detail || "Failed to send link", "error");
       }
     } catch {
       showToast("Server error. Please try again.", "error");
@@ -523,31 +518,29 @@ function ViewUsers() {
             {editUser.role === "Company Admin" && (
               <div style={{ marginBottom: 16 }}>
                 <label style={{ ...ms.label, marginTop: 4 }}>Company Logo</label>
-                <div style={ms.logoWrap}>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={e => setEditLogo(e.target.files[0])}
-                    style={{ fontSize: 13, flex: 1 }}
-                  />
-                  <button
-                    style={{
-                      ...ms.submitBtn,
-                      padding: "8px 14px",
-                      opacity: logoUploading || !editLogo ? 0.5 : 1,
-                      cursor: logoUploading || !editLogo ? "not-allowed" : "pointer",
-                    }}
-                    onClick={handleLogoUpload}
-                    disabled={logoUploading || !editLogo}
-                  >
-                    {logoUploading ? "Uploading…" : "Upload"}
-                  </button>
+                <div style={ms.checkGroup}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <span style={{ fontSize: 16, marginTop: 2 }}>🖼</span>
+                    <div style={{ flex: 1 }}>
+                      <strong style={{ fontSize: 13 }}>Send logo upload link</strong>
+                      <br />
+                      <small style={{ color: "#64748b" }}>Company Admin will receive an email with a link to upload their logo</small>
+                    </div>
+                    <button
+                      style={{
+                        ...ms.submitBtn,
+                        padding: "6px 14px",
+                        fontSize: 12,
+                        opacity: logoUploading ? 0.6 : 1,
+                        flexShrink: 0,
+                      }}
+                      onClick={handleLogoUpload}
+                      disabled={logoUploading}
+                    >
+                      {logoUploading ? "Sending…" : "Send Link"}
+                    </button>
+                  </div>
                 </div>
-                {editLogo && (
-                  <p style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
-                    Selected: {editLogo.name}
-                  </p>
-                )}
               </div>
             )}
 

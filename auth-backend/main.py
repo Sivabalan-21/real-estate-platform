@@ -641,3 +641,15 @@ async def upload_logo_by_token(
     db.commit()
 
     return {"message": "Logo uploaded successfully"}
+
+@app.get("/company/validate-logo-token/{token}")
+def validate_logo_token(token: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(
+        User.reset_token == token,
+        User.token_type  == "logo_upload",
+    ).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid token")
+    if is_token_expired(user.token_expiry):
+        raise HTTPException(status_code=400, detail="Token expired")
+    return {"valid": True}
