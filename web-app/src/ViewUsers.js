@@ -216,7 +216,6 @@ function ViewUsers() {
     setEditSendReset(false);
     setEditErr("");
     setShowDangerZone(false);
-    setEditLogo(null);
   };
 
   const handleLogoUpload = async () => {
