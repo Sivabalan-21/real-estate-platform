@@ -85,6 +85,9 @@ useEffect(() => {
         <div style={s.brand}>
           <span style={s.brandIcon}>⬡</span>
           <span style={s.brandText}>PropOS</span>
+          <button style={styles.navBtn} onClick={() => navigate("/admin/properties")}>
+  🏢 Properties
+</button>
         </div>
 
         <nav style={s.nav}>

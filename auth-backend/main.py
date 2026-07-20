@@ -16,6 +16,12 @@ from database import Base, SessionLocal, engine
 from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN
+from schemas import (
+    CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest,
+    DimensionTypeCreate, PropertyCreate, PropertyUpdate, AssignRequest,
+)
 from services.user_service import (
     backfill_companies,
     complete_registration,
@@ -653,3 +659,231 @@ def validate_logo_token(token: str, db: Session = Depends(get_db)):
     if is_token_expired(user.token_expiry):
         raise HTTPException(status_code=400, detail="Token expired")
     return {"valid": True}
+
+# ---------- DIMENSION TYPES ----------
+
+@app.post("/dimension-types")
+def create_dimension_type(
+    data: DimensionTypeCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Only Company Admin can create dimension types")
+    if not user.company_id:
+        raise HTTPException(400, "User has no associated company")
+
+    existing = db.query(DimensionType).filter(
+        DimensionType.company_id == user.company_id,
+        DimensionType.name == data.name,
+    ).first()
+    if existing:
+        return existing
+
+    dt = DimensionType(company_id=user.company_id, name=data.name, unit=data.unit)
+    db.add(dt)
+    db.commit()
+    db.refresh(dt)
+    return dt
+
+
+@app.get("/dimension-types")
+def get_dimension_types(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if not user.company_id:
+        raise HTTPException(400, "User has no associated company")
+    return db.query(DimensionType).filter(DimensionType.company_id == user.company_id).all()
+
+
+# ---------- PROPERTIES ----------
+
+@app.post("/properties")
+def create_property(
+    data: PropertyCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Only Company Admin can create properties")
+    if not user.company_id:
+        raise HTTPException(400, "User has no associated company")
+
+    prop = Property(
+        company_id=user.company_id,
+        name=data.name,
+        address=data.address,
+        description=data.description,
+        total_units=data.total_units or 0,
+        status=data.status or "active",
+        created_by=user.username,
+    )
+    db.add(prop)
+    db.flush()  # get prop.id before commit
+
+    for dim in data.dimensions:
+        dtype_id = dim.dimension_type_id
+        if not dtype_id:
+            if not dim.name:
+                raise HTTPException(400, "Dimension needs either dimension_type_id or name")
+            existing = db.query(DimensionType).filter(
+                DimensionType.company_id == user.company_id,
+                DimensionType.name == dim.name,
+            ).first()
+            if existing:
+                dtype_id = existing.id
+            else:
+                new_dt = DimensionType(company_id=user.company_id, name=dim.name, unit=dim.unit)
+                db.add(new_dt)
+                db.flush()
+                dtype_id = new_dt.id
+
+        db.add(PropertyDimension(
+            property_id=prop.id,
+            dimension_type_id=dtype_id,
+            value=dim.value,
+        ))
+
+    if data.assign_to:
+        pm = db.query(User).filter(
+            User.username == data.assign_to,
+            User.role == ROLE_PROPERTY_MANAGER,
+            User.company_id == user.company_id,
+        ).first()
+        if not pm:
+            raise HTTPException(400, "Invalid PM username for this company")
+        db.add(PropertyAssignment(
+            property_id=prop.id,
+            pm_username=data.assign_to,
+            assigned_by=user.username,
+        ))
+
+    db.commit()
+    db.refresh(prop)
+    return serialize_property(prop)
+
+
+@app.get("/properties")
+def get_properties(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        props = db.query(Property).filter(Property.company_id == user.company_id).all()
+    elif user.role == ROLE_PROPERTY_MANAGER:
+        props = (
+            db.query(Property)
+            .join(PropertyAssignment, PropertyAssignment.property_id == Property.id)
+            .filter(PropertyAssignment.pm_username == user.username)
+            .all()
+        )
+    else:
+        raise HTTPException(403, "Not authorized to view properties")
+
+    return [serialize_property(p) for p in props]
+
+
+@app.put("/properties/{property_id}")
+def update_property(
+    property_id: str,
+    data: PropertyUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Only Company Admin can edit properties")
+
+    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    for field in ("name", "address", "description", "total_units", "status"):
+        value = getattr(data, field)
+        if value is not None:
+            setattr(prop, field, value)
+
+    db.commit()
+    db.refresh(prop)
+    return serialize_property(prop)
+
+
+@app.delete("/properties/{property_id}")
+def delete_property(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Only Company Admin can delete properties")
+
+    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    db.delete(prop)  # cascade removes dimensions + assignments
+    db.commit()
+    return {"detail": "Property deleted"}
+
+
+@app.post("/properties/{property_id}/assign")
+def assign_property(
+    property_id: str,
+    data: AssignRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Only Company Admin can assign properties")
+
+    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    pm = db.query(User).filter(
+        User.username == data.pm_username,
+        User.role == ROLE_PROPERTY_MANAGER,
+        User.company_id == user.company_id,
+    ).first()
+    if not pm:
+        raise HTTPException(400, "Invalid PM username for this company")
+
+    existing = db.query(PropertyAssignment).filter(
+        PropertyAssignment.property_id == property_id,
+        PropertyAssignment.pm_username == data.pm_username,
+    ).first()
+    if existing:
+        return {"detail": "Already assigned"}
+
+    db.add(PropertyAssignment(
+        property_id=property_id,
+        pm_username=data.pm_username,
+        assigned_by=user.username,
+    ))
+    db.commit()
+    return {"detail": "Property assigned"}
+
+
+# ---------- serializer helper ----------
+
+def serialize_property(prop: Property):
+    return {
+        "id": prop.id,
+        "name": prop.name,
+        "address": prop.address,
+        "description": prop.description,
+        "total_units": prop.total_units,
+        "status": prop.status,
+        "created_by": prop.created_by,
+        "dimensions": [
+            {
+                "id": d.id,
+                "dimension_type_id": d.dimension_type_id,
+                "name": d.dimension_type.name,
+                "unit": d.dimension_type.unit,
+                "value": d.value,
+            }
+            for d in prop.dimensions
+        ],
+        "assigned_pms": [a.pm_username for a in prop.assignments],
+    }

@@ -15,6 +15,7 @@
 
   import PMDashboard from "./PMDashboard";
   import PMLayout from "./PMLayout";
+  import PropertyManagement from "./PropertyManagement";
   import PMUserManagement from "./PMUserManagement";
   import PMCreate from "./PMCreate";
   import CreateUser from "./CreateUser";
@@ -52,6 +53,7 @@
           <Route path="/pm"                      element={<PMLayout />}>
             <Route path="dashboard"              element={<PMDashboard />} />
             <Route path="create"                 element={<PMCreate />} />
+            <Route path="properties" element={<PropertyManagement />} />
             <Route path="manage"                 element={<PMUserManagement />} />
             <Route path="users/create"           element={<CreateUser />} />
             <Route path="users/view"             element={<ViewUsers />} />

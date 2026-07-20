@@ -41,3 +41,36 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True  # was orm_mode=True in Pydantic v1
+
+class DimensionTypeCreate(BaseModel):
+    name: str
+    unit: str | None = None
+
+
+class DimensionValueIn(BaseModel):
+    dimension_type_id: str | None = None   # existing dimension type
+    name: str | None = None                # OR create new on the fly
+    unit: str | None = None
+    value: str
+
+
+class PropertyCreate(BaseModel):
+    name: str
+    address: str | None = None
+    description: str | None = None
+    total_units: int | None = 0
+    status: str | None = "active"
+    dimensions: list[DimensionValueIn] = []
+    assign_to: str | None = None  # pm_username, optional at creation
+
+
+class PropertyUpdate(BaseModel):
+    name: str | None = None
+    address: str | None = None
+    description: str | None = None
+    total_units: int | None = None
+    status: str | None = None
+
+
+class AssignRequest(BaseModel):
+    pm_username: str

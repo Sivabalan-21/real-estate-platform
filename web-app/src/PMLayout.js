@@ -21,14 +21,6 @@ function PMLayout() {
         <button style={styles.navBtn} onClick={() => navigate("/pm/dashboard")}>
           Dashboard
         </button>
-
-        <button style={styles.navBtn} onClick={() => navigate("/pm/create")}>
-          Create
-        </button>
-
-        <button style={styles.navBtn} onClick={() => navigate("/pm/manage")}>
-          User Management
-        </button>
       </div>
 
       {/* MAIN */}
