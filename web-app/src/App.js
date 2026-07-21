@@ -42,12 +42,12 @@
           </Route>
 
           {/* ── ADMIN ────────────────────────────────────────── */}
-          <Route path="/admin"                   element={<AdminLayout />}>
-            <Route path="dashboard"              element={<AdminDashboard />} />
-            <Route path="users"                  element={<AdminUsers />} />
-            <Route path="settings"               element={<CompanySettings />}
-/>
-          </Route>
+<Route path="/admin"                   element={<AdminLayout />}>
+  <Route path="dashboard"              element={<AdminDashboard />} />
+  <Route path="users"                  element={<AdminUsers />} />
+  <Route path="properties"             element={<PropertyManagement />} />
+  <Route path="settings"               element={<CompanySettings />} />
+</Route>
 
           {/* ── PROPERTY MANAGER ─────────────────────────────── */}
           <Route path="/pm"                      element={<PMLayout />}>
