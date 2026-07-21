@@ -668,7 +668,7 @@ def create_dimension_type(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         raise HTTPException(403, "Only Company Admin can create dimension types")
     if not user.company_id:
         raise HTTPException(400, "User has no associated company")
@@ -705,7 +705,7 @@ def create_property(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         raise HTTPException(403, "Only Company Admin can create properties")
     if not user.company_id:
         raise HTTPException(400, "User has no associated company")
