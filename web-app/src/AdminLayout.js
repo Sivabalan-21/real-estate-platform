@@ -74,6 +74,7 @@ useEffect(() => {
   const NAV = [
     { icon: "⊞", label: "Dashboard",       path: "/admin/dashboard" },
     { icon: "◈", label: "User Management", path: "/admin/users"     },
+    { icon: "🏢", label: "Properties",      path: "/admin/properties" },
   ];
 
   return (
@@ -83,12 +84,9 @@ useEffect(() => {
       {/* SIDEBAR */}
       <aside style={s.sidebar}>
         <div style={s.brand}>
-          <span style={s.brandIcon}>⬡</span>
-          <span style={s.brandText}>PropOS</span>
-          <button style={styles.navBtn} onClick={() => navigate("/admin/properties")}>
-  🏢 Properties
-</button>
-        </div>
+  <span style={s.brandIcon}>⬡</span>
+  <span style={s.brandText}>PropOS</span>
+</div>
 
         <nav style={s.nav}>
           {NAV.map(n => {
