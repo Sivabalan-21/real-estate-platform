@@ -8,74 +8,80 @@ function AdminLayout() {
   const role      = localStorage.getItem("role") || "Admin";
 
   // FIXED - won't logout on missing status
-useEffect(() => {
-  const token = localStorage.getItem("token");
-  if (!token) return;
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
 
-  const check = async () => {
-    try {
-      const res = await fetch("http://187.127.180.107/users/me", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+    const check = async () => {
+      try {
+        const res = await fetch("http://187.127.180.107/users/me", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
 
-      // Only logout on 401 (invalid token) — not on any other error
-      if (res.status === 401 || res.status === 403) {
-        const companySlug = localStorage.getItem("company_slug");
-        alert("Your account has been suspended");
-        localStorage.clear();
-        navigate(companySlug ? `/portal/${companySlug}` : "/");
-        return;
+        // Only logout on 401 (invalid token) — not on any other error
+        if (res.status === 401 || res.status === 403) {
+          const companySlug = localStorage.getItem("company_slug");
+          alert("Your account has been suspended");
+          localStorage.clear();
+          navigate(companySlug ? `/portal/${companySlug}` : "/");
+          return;
+        }
+
+        if (!res.ok) return; // server error — ignore, don't logout
+
+        const data = await res.json();
+
+        const savedRole   = localStorage.getItem("role");
+        const savedStatus = localStorage.getItem("status");
+
+        const statusChanged = data.status?.trim().toLowerCase() !== savedStatus?.trim().toLowerCase();
+        const roleChanged   = data.role?.trim().toLowerCase()   !== savedRole?.trim().toLowerCase();
+        const isSuspended   = data.status?.trim().toLowerCase() === "suspended";
+
+        if (isSuspended || statusChanged || roleChanged) {
+          const companySlug = localStorage.getItem("company_slug");
+          localStorage.clear();
+          navigate(companySlug ? `/portal/${companySlug}` : "/");
+          return;
+        }
+
+        localStorage.setItem("status", data.status);
+        localStorage.setItem("role",   data.role);
+
+      } catch {
+        // Network error — ignore
       }
+    };
 
-      if (!res.ok) return; // server error — ignore, don't logout
-
-      const data = await res.json();
-
-      const savedRole   = localStorage.getItem("role");
-      const savedStatus = localStorage.getItem("status");
-
-      // Sync latest values back to localStorage so comparison always works
-      const statusChanged = data.status?.trim().toLowerCase() !== savedStatus?.trim().toLowerCase();
-      const roleChanged   = data.role?.trim().toLowerCase()   !== savedRole?.trim().toLowerCase();
-      const isSuspended   = data.status?.trim().toLowerCase() === "suspended";
-
-      // Kick out immediately if suspended
-      if (isSuspended || statusChanged || roleChanged) {
-        const companySlug = localStorage.getItem("company_slug");
-        localStorage.clear();
-        navigate(companySlug ? `/portal/${companySlug}` : "/");
-        return;
-      }
-
-      localStorage.setItem("status", data.status);
-      localStorage.setItem("role",   data.role);
-
-    } catch {
-      // Network error — ignore
-    }
-  };
-
-  check(); // run immediately on mount
-  const interval = setInterval(check, 10000); // check every 10 seconds
-  return () => clearInterval(interval);
-}, [navigate]);
-
+    check();
+    const interval = setInterval(check, 10000);
+    return () => clearInterval(interval);
+  }, [navigate]);
 
   const logout = () => {
     const companySlug = localStorage.getItem("company_slug");
     localStorage.clear();
     if (companySlug) {
-        navigate(`/portal/${companySlug}`);
+      navigate(`/portal/${companySlug}`);
     } else {
-        navigate("/");
+      navigate("/");
     }
-};
+  };
 
   const NAV = [
     { icon: "⊞", label: "Dashboard",       path: "/admin/dashboard" },
     { icon: "◈", label: "User Management", path: "/admin/users"     },
-    { icon: "🏢", label: "Properties",      path: "/admin/properties" },
+    ...(role === "Admin" ? [{ icon: "🏢", label: "Properties", path: "/admin/properties" }] : []),
   ];
+
+  if (location.pathname === "/admin/properties" && role !== "Admin") {
+    return (
+      <div style={{ padding: 40, color: "#94a3b8", fontFamily: "'DM Sans', sans-serif" }}>
+        <h2 style={{ color: "#0f172a" }}>Not authorized</h2>
+        <p>You don't have access to this page.</p>
+      </div>
+    );
+  }
 
   return (
     <div style={s.shell}>
@@ -84,9 +90,9 @@ useEffect(() => {
       {/* SIDEBAR */}
       <aside style={s.sidebar}>
         <div style={s.brand}>
-  <span style={s.brandIcon}>⬡</span>
-  <span style={s.brandText}>PropOS</span>
-</div>
+          <span style={s.brandIcon}>⬡</span>
+          <span style={s.brandText}>PropOS</span>
+        </div>
 
         <nav style={s.nav}>
           {NAV.map(n => {
