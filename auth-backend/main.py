@@ -17,7 +17,7 @@ from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment
-from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN
 from schemas import (
     CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest,
     DimensionTypeCreate, PropertyCreate, PropertyUpdate, AssignRequest,
@@ -769,7 +769,7 @@ def get_properties(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         props = db.query(Property).filter(Property.company_id == user.company_id).all()
     elif user.role == ROLE_PROPERTY_MANAGER:
         props = (
@@ -791,7 +791,7 @@ def update_property(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         raise HTTPException(403, "Only Company Admin can edit properties")
 
     prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
@@ -814,7 +814,7 @@ def delete_property(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         raise HTTPException(403, "Only Company Admin can delete properties")
 
     prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
@@ -833,7 +833,7 @@ def assign_property(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN):
         raise HTTPException(403, "Only Company Admin can assign properties")
 
     prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
