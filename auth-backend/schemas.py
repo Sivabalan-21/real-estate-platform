@@ -61,7 +61,6 @@ class PropertyCreate(BaseModel):
     total_units: int | None = 0
     status: str | None = "active"
     dimensions: list[DimensionValueIn] = []
-    assign_to: str | None = None  # pm_username, optional at creation
 
 
 class PropertyUpdate(BaseModel):
