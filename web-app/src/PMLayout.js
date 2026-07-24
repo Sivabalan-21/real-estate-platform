@@ -16,12 +16,14 @@ function PMLayout() {
 
       {/* SIDEBAR */}
       <div style={styles.sidebar}>
-        <h2 style={styles.logo}>PM Panel</h2>
-
-        <button style={styles.navBtn} onClick={() => navigate("/pm/dashboard")}>
-          Dashboard
-        </button>
-      </div>
+  <h2 style={styles.logo}>PM Panel</h2>
+  <button style={styles.navBtn} onClick={() => navigate("/pm/dashboard")}>
+    Dashboard
+  </button>
+  <button style={styles.navBtn} onClick={() => navigate("/pm/properties")}>
+    🏢 Properties
+  </button>
+</div>
 
       {/* MAIN */}
       <div style={styles.main}>
