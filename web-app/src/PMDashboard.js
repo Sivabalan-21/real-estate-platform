@@ -3,109 +3,119 @@ import { useNavigate } from "react-router-dom";
 
 const API = "http://194.164.149.22/api";
 
-export default function PMDashboard() {
-  const navigate   = useNavigate();
-  const token      = localStorage.getItem("token");
-  const username   = localStorage.getItem("username");
+function PMDashboard() {
+  const navigate = useNavigate();
+  const token = localStorage.getItem("token");
+  const username = localStorage.getItem("username");
 
   const [properties, setProperties] = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [toast,      setToast]      = useState(null);
+  const [me, setMe] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const showToast = (msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
-
-  const fetchProperties = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/properties`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.status === 401) { navigate("/"); return; }
-      const data = await res.json();
-      setProperties(Array.isArray(data) ? data : []);
+      const [propsRes, meRes] = await Promise.all([
+        fetch(`${API}/properties`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const propsData = await propsRes.json();
+      const meData = await meRes.json();
+      setProperties(Array.isArray(propsData) ? propsData : []);
+      setMe(meData);
     } catch {
-      showToast("Failed to load properties", "error");
+      // silent — page still renders with zeros
     } finally {
       setLoading(false);
     }
-  }, [token, navigate]);
+  }, [token]);
 
-  useEffect(() => { fetchProperties(); }, [fetchProperties]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const totalUnits = properties.reduce((sum, p) => sum + (p.total_units || 0), 0);
+  const activeCount = properties.filter(p => p.status === "active").length;
+  const maxUnits = me?.max_units || 0;
+  const usedUnits = me?.used_units || 0;
+  const remaining = maxUnits - usedUnits;
+  const usagePct = maxUnits > 0 ? Math.min(100, Math.round((usedUnits / maxUnits) * 100)) : 0;
 
   return (
     <div style={s.page}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-      {toast && (
-        <div style={{ ...s.toast, background: toast.type === "error" ? "#ef4444" : "#10b981" }}>
-          {toast.msg}
-        </div>
-      )}
-
       <div style={s.header}>
         <div>
-          <h2 style={s.pageTitle}>My Properties</h2>
-          <p style={s.pageSub}>Welcome back, {username} — {properties.length} properties assigned to you</p>
+          <h2 style={s.pageTitle}>Welcome back, {username}</h2>
+          <p style={s.pageSub}>Here's an overview of your portfolio</p>
         </div>
+        <button style={s.primaryBtn} onClick={() => navigate("/pm/properties")}>
+          Manage Properties →
+        </button>
       </div>
 
       {loading ? (
-        <div style={s.empty}>Loading your properties…</div>
-      ) : properties.length === 0 ? (
-        <div style={s.emptyCard}>
-          <p style={s.emptyIcon}>🏢</p>
-          <p style={s.emptyTitle}>No properties assigned</p>
-          <p style={s.emptySub}>You have no properties assigned yet. Contact your administrator.</p>
-        </div>
+        <div style={s.empty}>Loading dashboard…</div>
       ) : (
-        <div style={s.grid}>
-          {properties.map(p => (
-            <div key={p.id} style={s.card}>
-              <div style={s.cardHeader}>
-                <div>
-                  <h3 style={s.cardTitle}>{p.name}</h3>
-                  <p style={s.cardAddress}>{p.address || "No address provided"}</p>
-                </div>
-                <span style={{
-                  ...s.statusBadge,
-                  background: p.status === "active" ? "#d1fae5" : "#fee2e2",
-                  color: p.status === "active" ? "#065f46" : "#991b1b"
-                }}>
-                  {p.status}
-                </span>
-              </div>
-
-              {p.description && <p style={s.cardDesc}>{p.description}</p>}
-
-              {p.dimensions?.length > 0 && (
-                <div style={s.dimSection}>
-                  <p style={s.sectionLabel}>Dimensions</p>
-                  <div style={s.dimGrid}>
-                    {p.dimensions.map(d => (
-                      <div key={d.id} style={s.dimChip}>
-                        <span style={s.dimName}>{d.name}</span>
-                        <span style={s.dimValue}>{d.value} {d.unit || ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div style={s.statsRow}>
-                <div style={s.statBox}>
-                  <span style={s.statNum}>{p.total_units}</span>
-                  <span style={s.statLabel}>Total Units</span>
-                </div>
-                <div style={s.statBox}>
-                  <span style={s.statNum}>{p.dimensions?.length || 0}</span>
-                  <span style={s.statLabel}>Dimensions</span>
-                </div>
+        <>
+          {/* STAT CARDS */}
+          <div style={s.statGrid}>
+            <div style={s.statCard}>
+              <p style={s.statLabel}>Properties Managed</p>
+              <p style={s.statValue}>{properties.length}</p>
+            </div>
+            <div style={s.statCard}>
+              <p style={s.statLabel}>Active Properties</p>
+              <p style={s.statValue}>{activeCount}</p>
+            </div>
+            <div style={s.statCard}>
+              <p style={s.statLabel}>Total Units Deployed</p>
+              <p style={s.statValue}>{totalUnits}</p>
+            </div>
+            <div style={s.statCard}>
+              <p style={s.statLabel}>Unit Quota Remaining</p>
+              <p style={s.statValue}>{remaining} <span style={s.statOf}>/ {maxUnits}</span></p>
+              <div style={s.progressTrack}>
+                <div style={{ ...s.progressFill, width: `${usagePct}%` }} />
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+
+          {maxUnits === 0 && (
+            <div style={s.noticeCard}>
+              <strong>No unit quota allocated yet.</strong> Contact your Admin to set a unit
+              allocation before creating properties with units.
+            </div>
+          )}
+
+          {/* RECENT PROPERTIES */}
+          <h3 style={s.sectionTitle}>Recent Properties</h3>
+          {properties.length === 0 ? (
+            <div style={s.emptyCard}>
+              <p style={s.emptyIcon}>🏢</p>
+              <p style={s.emptyTitle}>No properties yet</p>
+              <p style={s.emptySub}>Head to Properties to create your first one.</p>
+            </div>
+          ) : (
+            <div style={s.grid}>
+              {properties.slice(0, 3).map(p => (
+                <div key={p.id} style={s.card}>
+                  <div style={s.cardHeader}>
+                    <h4 style={s.cardTitle}>{p.name}</h4>
+                    <span style={{ ...s.statusBadge, background: p.status === "active" ? "#d1fae5" : "#fee2e2", color: p.status === "active" ? "#065f46" : "#991b1b" }}>
+                      {p.status}
+                    </span>
+                  </div>
+                  <p style={s.cardAddress}>{p.address || "No address provided"}</p>
+                  <div style={s.cardFooter}>
+                    <span>{p.total_units} unit(s)</span>
+                    <span>{p.dimensions?.length || 0} dimension(s)</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -113,30 +123,35 @@ export default function PMDashboard() {
 
 const s = {
   page:        { padding: 32, background: "#f8fafc", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif" },
-  header:      { marginBottom: 24 },
+  header:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 },
   pageTitle:   { margin: 0, fontSize: 24, fontWeight: 700, color: "#0f172a" },
   pageSub:     { margin: "4px 0 0", fontSize: 13, color: "#64748b" },
+  primaryBtn:  { background: "#6366f1", color: "#fff", border: "none", padding: "10px 20px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 },
   empty:       { textAlign: "center", color: "#94a3b8", padding: 40, fontSize: 14 },
-  emptyCard:   { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "60px 20px", textAlign: "center" },
-  emptyIcon:   { fontSize: 40, margin: "0 0 12px" },
-  emptyTitle:  { fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 6px" },
+
+  statGrid:    { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 28 },
+  statCard:    { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 18, boxShadow: "0 1px 4px rgba(0,0,0,.04)" },
+  statLabel:   { margin: 0, fontSize: 12, color: "#64748b", fontWeight: 600 },
+  statValue:   { margin: "6px 0 0", fontSize: 26, fontWeight: 700, color: "#0f172a" },
+  statOf:      { fontSize: 14, fontWeight: 500, color: "#94a3b8" },
+  progressTrack:{ marginTop: 10, height: 6, borderRadius: 4, background: "#f1f5f9", overflow: "hidden" },
+  progressFill: { height: "100%", background: "#6366f1", borderRadius: 4, transition: "width .3s ease" },
+
+  noticeCard:  { background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", padding: "12px 16px", borderRadius: 8, fontSize: 13, marginBottom: 28 },
+
+  sectionTitle:{ fontSize: 16, fontWeight: 700, color: "#0f172a", margin: "0 0 14px" },
+  emptyCard:   { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "48px 20px", textAlign: "center" },
+  emptyIcon:   { fontSize: 32, margin: "0 0 10px" },
+  emptyTitle:  { fontSize: 15, fontWeight: 700, color: "#0f172a", margin: "0 0 4px" },
   emptySub:    { fontSize: 13, color: "#64748b", margin: 0 },
-  grid:        { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 20 },
-  card:        { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,.04)" },
-  cardHeader:  { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 },
-  cardTitle:   { margin: 0, fontSize: 16, fontWeight: 700, color: "#0f172a" },
-  cardAddress: { margin: "2px 0 0", fontSize: 12, color: "#64748b" },
-  cardDesc:    { fontSize: 13, color: "#475569", margin: "8px 0", lineHeight: 1.5 },
+
+  grid:        { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 },
+  card:        { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: 18, boxShadow: "0 1px 4px rgba(0,0,0,.04)" },
+  cardHeader:  { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
+  cardTitle:   { margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" },
+  cardAddress: { margin: "4px 0 12px", fontSize: 12, color: "#64748b" },
   statusBadge: { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0 },
-  dimSection:  { marginTop: 12 },
-  sectionLabel:{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, margin: "0 0 6px" },
-  dimGrid:     { display: "flex", flexWrap: "wrap", gap: 6 },
-  dimChip:     { background: "#f1f5f9", borderRadius: 6, padding: "4px 10px", fontSize: 12, display: "flex", gap: 6, alignItems: "center" },
-  dimName:     { color: "#475569", fontWeight: 600 },
-  dimValue:    { color: "#6366f1", fontWeight: 700 },
-  statsRow:    { display: "flex", gap: 12, marginTop: 14, paddingTop: 12, borderTop: "1px solid #f1f5f9" },
-  statBox:     { flex: 1, background: "#f8fafc", borderRadius: 8, padding: "10px 14px", textAlign: "center" },
-  statNum:     { display: "block", fontSize: 20, fontWeight: 700, color: "#6366f1" },
-  statLabel:   { display: "block", fontSize: 11, color: "#64748b", marginTop: 2 },
-  toast:       { position: "fixed", top: 20, right: 20, color: "#fff", padding: "12px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,.15)" },
+  cardFooter:  { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#475569", paddingTop: 10, borderTop: "1px solid #f1f5f9" },
 };
+
+export default PMDashboard;
