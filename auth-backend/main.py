@@ -668,8 +668,8 @@ def create_dimension_type(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_ADMIN):
-        raise HTTPException(403, "Only Admin can create dimension types")
+    if user.role not in (ROLE_ADMIN, ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_PROPERTY_MANAGER):
+        raise HTTPException(403, "Not authorized to create dimension types")
     if not user.company_id:
         raise HTTPException(400, "User has no associated company")
 
@@ -705,215 +705,6 @@ def create_property(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    if user.role not in (ROLE_ADMIN):
-        raise HTTPException(403, "Only Admin can create properties")
-    if not user.company_id:
-        raise HTTPException(400, "User has no associated company")
-
-    prop = Property(
-        company_id=user.company_id,
-        name=data.name,
-        address=data.address,
-        description=data.description,
-        total_units=data.total_units or 0,
-        status=data.status or "active",
-        created_by=user.username,
-    )
-    db.add(prop)
-    db.flush()  # get prop.id before commit
-
-    for dim in data.dimensions:
-        dtype_id = dim.dimension_type_id
-        if not dtype_id:
-            if not dim.name:
-                raise HTTPException(400, "Dimension needs either dimension_type_id or name")
-            existing = db.query(DimensionType).filter(
-                DimensionType.company_id == user.company_id,
-                DimensionType.name == dim.name,
-            ).first()
-            if existing:
-                dtype_id = existing.id
-            else:
-                new_dt = DimensionType(company_id=user.company_id, name=dim.name, unit=dim.unit)
-                db.add(new_dt)
-                db.flush()
-                dtype_id = new_dt.id
-
-        db.add(PropertyDimension(
-            property_id=prop.id,
-            dimension_type_id=dtype_id,
-            value=dim.value,
-        ))
-
-    if data.assign_to:
-        pm = db.query(User).filter(
-            User.username == data.assign_to,
-            User.role == ROLE_PROPERTY_MANAGER,
-            User.company_id == user.company_id,
-        ).first()
-        if not pm:
-            raise HTTPException(400, "Invalid PM username for this company")
-        db.add(PropertyAssignment(
-            property_id=prop.id,
-            pm_username=data.assign_to,
-            assigned_by=user.username,
-        ))
-
-    db.commit()
-    db.refresh(prop)
-    return serialize_property(prop)
-
-
-@app.get("/properties")
-def get_properties(
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
-    if user.role in (ROLE_ADMIN):
-        props = db.query(Property).filter(Property.company_id == user.company_id).all()
-    elif user.role == ROLE_PROPERTY_MANAGER:
-        props = (
-            db.query(Property)
-            .join(PropertyAssignment, PropertyAssignment.property_id == Property.id)
-            .filter(PropertyAssignment.pm_username == user.username)
-            .all()
-        )
-    else:
-        raise HTTPException(403, "Not authorized to view properties")
-
-    return [serialize_property(p) for p in props]
-
-
-@app.put("/properties/{property_id}")
-def update_property(
-    property_id: str,
-    data: PropertyUpdate,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_PROPERTY_MANAGER):
-        raise HTTPException(403, "Not authorized")
-
-    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
-    if not prop:
-        raise HTTPException(404, "Property not found")
-
-    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
-        raise HTTPException(403, "You can only edit properties you created")
-
-    if data.total_units is not None and data.total_units != prop.total_units:
-        creator = db.query(User).filter(User.username == prop.created_by).first()
-        if creator and creator.role == ROLE_PROPERTY_MANAGER:
-            delta = data.total_units - prop.total_units
-            remaining = (creator.max_units or 0) - (creator.used_units or 0)
-            if delta > remaining:
-                raise HTTPException(400, f"Unit limit exceeded. Only {remaining} more units available.")
-            creator.used_units = (creator.used_units or 0) + delta
-
-    for field in ("name", "address", "description", "total_units", "status"):
-        value = getattr(data, field)
-        if value is not None:
-            setattr(prop, field, value)
-
-    db.commit()
-    db.refresh(prop)
-    return serialize_property(prop)
-
-
-@app.delete("/properties/{property_id}")
-def delete_property(
-    property_id: str,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
-    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_PROPERTY_MANAGER):
-        raise HTTPException(403, "Not authorized")
-
-    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
-    if not prop:
-        raise HTTPException(404, "Property not found")
-
-    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
-        raise HTTPException(403, "You can only delete properties you created")
-
-    creator = db.query(User).filter(User.username == prop.created_by).first()
-    if creator:
-        creator.used_units = max(0, (creator.used_units or 0) - (prop.total_units or 0))
-
-    db.delete(prop)
-    db.commit()
-    return {"detail": "Property deleted"}
-
-
-@app.post("/properties/{property_id}/assign")
-def assign_property(
-    property_id: str,
-    data: AssignRequest,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
-    if user.role not in ( ROLE_ADMIN):
-        raise HTTPException(403, "Only Company Admin can assign properties")
-
-    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
-    if not prop:
-        raise HTTPException(404, "Property not found")
-
-    pm = db.query(User).filter(
-        User.username == data.pm_username,
-        User.role == ROLE_PROPERTY_MANAGER,
-        User.company_id == user.company_id,
-    ).first()
-    if not pm:
-        raise HTTPException(400, "Invalid PM username for this company")
-
-    existing = db.query(PropertyAssignment).filter(
-        PropertyAssignment.property_id == property_id,
-        PropertyAssignment.pm_username == data.pm_username,
-    ).first()
-    if existing:
-        return {"detail": "Already assigned"}
-
-    db.add(PropertyAssignment(
-        property_id=property_id,
-        pm_username=data.pm_username,
-        assigned_by=user.username,
-    ))
-    db.commit()
-    return {"detail": "Property assigned"}
-
-
-# ---------- serializer helper ----------
-
-def serialize_property(prop: Property):
-    return {
-        "id": prop.id,
-        "name": prop.name,
-        "address": prop.address,
-        "description": prop.description,
-        "total_units": prop.total_units,
-        "status": prop.status,
-        "created_by": prop.created_by,
-        "dimensions": [
-            {
-                "id": d.id,
-                "dimension_type_id": d.dimension_type_id,
-                "name": d.dimension_type.name,
-                "unit": d.dimension_type.unit,
-                "value": d.value,
-            }
-            for d in prop.dimensions
-        ],
-        "assigned_pms": [a.pm_username for a in prop.assignments],
-    }
-
-
-@app.post("/properties")
-def create_property(
-    data: PropertyCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-):
     if user.role != ROLE_PROPERTY_MANAGER:
         raise HTTPException(403, "Only Property Managers can create properties")
     if not user.company_id:
@@ -924,7 +715,7 @@ def create_property(
     if requested_units > remaining:
         raise HTTPException(
             400,
-            f"Unit limit exceeded. You have {remaining} units remaining out of {user.max_units}."
+            f"Unit limit exceeded. You have {remaining} unit(s) remaining out of {user.max_units or 0} allocated."
         )
 
     prop = Property(
@@ -970,3 +761,118 @@ def create_property(
     db.commit()
     db.refresh(prop)
     return serialize_property(prop)
+
+
+@app.get("/properties")
+def get_properties(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role in (ROLE_ADMIN, ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
+        props = db.query(Property).filter(Property.company_id == user.company_id).all()
+    elif user.role == ROLE_PROPERTY_MANAGER:
+        props = db.query(Property).filter(Property.created_by == user.username).all()
+    else:
+        raise HTTPException(403, "Not authorized to view properties")
+
+    return [serialize_property(p) for p in props]
+
+
+@app.put("/properties/{property_id}")
+def update_property(
+    property_id: str,
+    data: PropertyUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_PROPERTY_MANAGER):
+        raise HTTPException(403, "Not authorized")
+
+    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
+        raise HTTPException(403, "You can only edit properties you created")
+
+    if data.total_units is not None and data.total_units != prop.total_units:
+        creator = db.query(User).filter(User.username == prop.created_by).first()
+        if creator and creator.role == ROLE_PROPERTY_MANAGER:
+            delta = data.total_units - prop.total_units
+            remaining = (creator.max_units or 0) - (creator.used_units or 0)
+            if delta > remaining:
+                raise HTTPException(400, f"Unit limit exceeded. Only {remaining} more unit(s) available.")
+            creator.used_units = (creator.used_units or 0) + delta
+
+    for field in ("name", "address", "description", "total_units", "status"):
+        value = getattr(data, field)
+        if value is not None:
+            setattr(prop, field, value)
+
+    db.commit()
+    db.refresh(prop)
+    return serialize_property(prop)
+
+
+@app.delete("/properties/{property_id}")
+def delete_property(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_PROPERTY_MANAGER):
+        raise HTTPException(403, "Not authorized")
+
+    prop = db.query(Property).filter(Property.id == property_id, Property.company_id == user.company_id).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
+        raise HTTPException(403, "You can only delete properties you created")
+
+    creator = db.query(User).filter(User.username == prop.created_by).first()
+    if creator:
+        creator.used_units = max(0, (creator.used_units or 0) - (prop.total_units or 0))
+
+    db.delete(prop)
+    db.commit()
+    return {"detail": "Property deleted"}
+# ---------- serializer helper ----------
+
+def serialize_property(prop: Property):
+    return {
+        "id": prop.id,
+        "name": prop.name,
+        "address": prop.address,
+        "description": prop.description,
+        "total_units": prop.total_units,
+        "status": prop.status,
+        "created_by": prop.created_by,
+        "dimensions": [
+            {
+                "id": d.id,
+                "dimension_type_id": d.dimension_type_id,
+                "name": d.dimension_type.name,
+                "unit": d.dimension_type.unit,
+                "value": d.value,
+            }
+            for d in prop.dimensions
+        ],
+        "assigned_pms": [a.pm_username for a in prop.assignments],
+    }
+
+@app.get("/users/me", response_model=None)
+def get_me(db=Depends(get_db), user=Depends(current_user)):
+    return {
+        "user_id":      user.id,
+        "username":     user.username,
+        "email":        user.email,
+        "role":         user.role,
+        "status":       user.status,
+        "company_name": user.company.name if user.company else None,
+        "company_code": user.company.company_code if user.company else None,
+        "company_slug": user.company.slug if user.company else None,
+        "company_id":   user.company_id,
+        "max_units":    user.max_units,
+        "used_units":   user.used_units,
+    }
