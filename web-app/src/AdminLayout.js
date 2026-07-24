@@ -71,7 +71,6 @@ function AdminLayout() {
   const NAV = [
     { icon: "⊞", label: "Dashboard",       path: "/admin/dashboard" },
     { icon: "◈", label: "User Management", path: "/admin/users"     },
-    ...(role === "Admin" ? [{ icon: "🏢", label: "Properties", path: "/admin/properties" }] : []),
   ];
 
   if (location.pathname === "/admin/properties" && role !== "Admin") {
