@@ -7,9 +7,11 @@ export default function PropertyManagement() {
   const navigate = useNavigate();
   const token    = localStorage.getItem("token");
   const role     = localStorage.getItem("role");
+  const isPM     = role === "Property Manager";
+  const canManage = ["Admin", "Company Admin", "Super Admin", "Property Manager"].includes(role);
 
   const [properties,  setProperties]  = useState([]);
-  const [pmUsers,     setPmUsers]     = useState([]);
+  const [me,          setMe]          = useState(null); // current user profile (for quota display)
   const [loading,     setLoading]     = useState(true);
   const [showCreate,  setShowCreate]  = useState(false);
   const [editProp,    setEditProp]    = useState(null);
@@ -19,7 +21,7 @@ export default function PropertyManagement() {
 
   // Create form state
   const [form, setForm] = useState({
-    name: "", address: "", description: "", total_units: "", status: "active", assign_to: ""
+    name: "", address: "", description: "", total_units: "", status: "active"
   });
   const [dimensions, setDimensions] = useState([{ name: "", unit: "", value: "" }]);
   const [saving, setSaving] = useState(false);
@@ -45,23 +47,24 @@ export default function PropertyManagement() {
     }
   }, [token, navigate]);
 
-  const fetchPMs = useCallback(async () => {
+  const fetchMe = useCallback(async () => {
+    if (!isPM) return;
     try {
-      const res = await fetch(`${API}/users/my-hierarchy`, {
+      const res = await fetch(`${API}/users/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      setPmUsers(Array.isArray(data) ? data.filter(u => u.role === "Property Manager") : []);
+      setMe(data);
     } catch {}
-  }, [token]);
+  }, [token, isPM]);
 
   useEffect(() => {
     fetchProperties();
-    fetchPMs();
-  }, [fetchProperties, fetchPMs]);
+    fetchMe();
+  }, [fetchProperties, fetchMe]);
 
   const resetForm = () => {
-    setForm({ name: "", address: "", description: "", total_units: "", status: "active", assign_to: "" });
+    setForm({ name: "", address: "", description: "", total_units: "", status: "active" });
     setDimensions([{ name: "", unit: "", value: "" }]);
     setFormErr("");
   };
@@ -87,7 +90,6 @@ export default function PropertyManagement() {
           description: form.description,
           total_units: parseInt(form.total_units) || 0,
           status: form.status,
-          assign_to: form.assign_to || null,
           dimensions: validDims.map(d => ({ name: d.name, unit: d.unit, value: d.value })),
         })
       });
@@ -97,6 +99,7 @@ export default function PropertyManagement() {
       setShowCreate(false);
       resetForm();
       fetchProperties();
+      fetchMe(); // refresh quota display
     } catch {
       setFormErr("Server error. Please try again.");
     } finally {
@@ -125,6 +128,7 @@ export default function PropertyManagement() {
       showToast("Property updated successfully");
       setEditProp(null);
       fetchProperties();
+      fetchMe();
     } catch {
       setFormErr("Server error. Please try again.");
     } finally {
@@ -143,6 +147,7 @@ export default function PropertyManagement() {
       showToast("Property deleted");
       setDeleteTarget(null);
       fetchProperties();
+      fetchMe();
     } catch {
       showToast("Server error", "error");
     } finally {
@@ -150,22 +155,7 @@ export default function PropertyManagement() {
     }
   };
 
-  const handleAssign = async (propertyId, pmUsername) => {
-    if (!pmUsername) return;
-    try {
-      const res = await fetch(`${API}/properties/${propertyId}/assign`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ pm_username: pmUsername })
-      });
-      const data = await res.json();
-      if (!res.ok) { showToast(data.detail || "Assignment failed", "error"); return; }
-      showToast("Property assigned to Property Manager");
-      fetchProperties();
-    } catch {
-      showToast("Server error", "error");
-    }
-  };
+  const remainingUnits = me ? (me.max_units || 0) - (me.used_units || 0) : null;
 
   return (
     <div style={s.page}>
@@ -181,11 +171,20 @@ export default function PropertyManagement() {
       <div style={s.header}>
         <div>
           <h2 style={s.pageTitle}>Property Management</h2>
-          <p style={s.pageSub}>{properties.length} properties in your company</p>
+          <p style={s.pageSub}>
+            {properties.length} {isPM ? "properties you manage" : "properties in your company"}
+            {isPM && remainingUnits !== null && (
+              <span style={s.quotaBadge}>
+                {remainingUnits} unit(s) remaining of {me.max_units || 0}
+              </span>
+            )}
+          </p>
         </div>
-        <button style={s.primaryBtn} onClick={() => { setShowCreate(true); resetForm(); }}>
-          + Add Property
-        </button>
+        {isPM && (
+          <button style={s.primaryBtn} onClick={() => { setShowCreate(true); resetForm(); }}>
+            + Add Property
+          </button>
+        )}
       </div>
 
       {/* PROPERTY LIST */}
@@ -195,7 +194,9 @@ export default function PropertyManagement() {
         <div style={s.emptyCard}>
           <p style={s.emptyIcon}>🏢</p>
           <p style={s.emptyTitle}>No properties yet</p>
-          <p style={s.emptySub}>Click "Add Property" to create your first property.</p>
+          <p style={s.emptySub}>
+            {isPM ? 'Click "Add Property" to create your first property.' : "No properties have been created yet."}
+          </p>
         </div>
       ) : (
         <div style={s.grid}>
@@ -234,47 +235,26 @@ export default function PropertyManagement() {
                 <span style={s.unitsValue}>{p.total_units}</span>
               </div>
 
-              {/* Assigned PMs */}
+              {/* Owner */}
               <div style={s.assignSection}>
-                <p style={s.dimLabel}>Assigned Property Managers</p>
-                {p.assigned_pms?.length > 0 ? (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {p.assigned_pms.map(pm => (
-                      <span key={pm} style={s.pmChip}>{pm}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <p style={s.notAssigned}>Not assigned yet</p>
-                )}
-
-                {pmUsers.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <select
-                      style={s.assignSelect}
-                      defaultValue=""
-                      onChange={e => handleAssign(p.id, e.target.value)}
-                    >
-                      <option value="">Assign to PM…</option>
-                      {pmUsers.filter(pm => !p.assigned_pms?.includes(pm.username)).map(pm => (
-                        <option key={pm.user_id} value={pm.username}>{pm.username}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <p style={s.dimLabel}>Property Manager</p>
+                <span style={s.pmChip}>{p.created_by}</span>
               </div>
 
               {/* Actions */}
-              <div style={s.cardActions}>
-                <button style={s.editBtn} onClick={() => { setEditProp({ ...p }); setFormErr(""); }}>Edit</button>
-                <button style={s.deleteBtn} onClick={() => setDeleteTarget(p)}>Delete</button>
-              </div>
+              {canManage && (
+                <div style={s.cardActions}>
+                  <button style={s.editBtn} onClick={() => { setEditProp({ ...p }); setFormErr(""); }}>Edit</button>
+                  <button style={s.deleteBtn} onClick={() => setDeleteTarget(p)}>Delete</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {/* CREATE MODAL */}
-      {showCreate && (
+      {/* CREATE MODAL (PM only) */}
+      {showCreate && isPM && (
         <div style={ms.overlay} onClick={() => setShowCreate(false)}>
           <div style={ms.box} onClick={e => e.stopPropagation()}>
             <div style={ms.header}>
@@ -282,6 +262,12 @@ export default function PropertyManagement() {
               <button style={ms.close} onClick={() => setShowCreate(false)}>✕</button>
             </div>
             <div style={ms.body}>
+
+              {remainingUnits !== null && (
+                <p style={ms.quotaNote}>
+                  You have <strong>{remainingUnits}</strong> unit(s) remaining of your {me.max_units || 0} allocated.
+                </p>
+              )}
 
               <label style={ms.label}>Property Name <span style={ms.req}>*</span></label>
               <input style={ms.input} placeholder="e.g. Block A, Tower 1" value={form.name}
@@ -326,19 +312,6 @@ export default function PropertyManagement() {
                 </div>
               ))}
               <button style={ms.addDimBtn} onClick={addDimension}>+ Add Dimension</button>
-
-              {/* Assign PM */}
-              {pmUsers.length > 0 && (
-                <>
-                  <label style={{ ...ms.label, marginTop: 12 }}>Assign to Property Manager</label>
-                  <select style={ms.input} value={form.assign_to} onChange={e => setForm(f => ({ ...f, assign_to: e.target.value }))}>
-                    <option value="">Select PM (optional)</option>
-                    {pmUsers.map(pm => (
-                      <option key={pm.user_id} value={pm.username}>{pm.username}</option>
-                    ))}
-                  </select>
-                </>
-              )}
 
               {formErr && <p style={ms.errorMsg}>{formErr}</p>}
 
@@ -436,6 +409,7 @@ const s = {
   header:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 },
   pageTitle:   { margin: 0, fontSize: 24, fontWeight: 700, color: "#0f172a" },
   pageSub:     { margin: "4px 0 0", fontSize: 13, color: "#64748b" },
+  quotaBadge:  { marginLeft: 10, background: "#ede9fe", color: "#6366f1", padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 },
   primaryBtn:  { background: "#6366f1", color: "#fff", border: "none", padding: "10px 20px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14 },
   empty:       { textAlign: "center", color: "#94a3b8", padding: 40, fontSize: 14 },
   emptyCard:   { background: "#fff", borderRadius: 12, border: "1px solid #e2e8f0", padding: "60px 20px", textAlign: "center" },
@@ -461,7 +435,6 @@ const s = {
   assignSection:{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #f1f5f9" },
   pmChip:      { background: "#ede9fe", color: "#6366f1", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 },
   notAssigned: { fontSize: 12, color: "#94a3b8", margin: "4px 0" },
-  assignSelect:{ padding: "7px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#fff", cursor: "pointer", width: "100%" },
   cardActions: { display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" },
   editBtn:     { background: "#ede9fe", color: "#6366f1", border: "none", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
   deleteBtn:   { background: "#fee2e2", color: "#ef4444", border: "none", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
@@ -475,6 +448,7 @@ const ms = {
   title:       { margin: 0, fontSize: 16, fontWeight: 700, color: "#0f172a" },
   close:       { background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8" },
   body:        { padding: 24 },
+  quotaNote:   { fontSize: 13, color: "#475569", background: "#f1f5f9", padding: "8px 12px", borderRadius: 8, marginBottom: 14 },
   label:       { display: "block", fontSize: 11, fontWeight: 600, color: "#475569", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 },
   req:         { color: "#ef4444" },
   input:       { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, marginBottom: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" },
