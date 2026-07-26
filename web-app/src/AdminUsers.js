@@ -7,7 +7,7 @@ const ROLE_OPTIONS_BY_CURRENT_ROLE = {
 };
 const VISIBLE_ROLES_BY_CURRENT_ROLE = {
   "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Admin"],
+  "Company Admin": ["Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
   "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
 const ROLE_META = {
@@ -405,10 +405,10 @@ return matchSearch && matchRole;
             {editEmailErr && <p style={{ ...ms.errorMsg, marginTop: -12 }}>{editEmailErr}</p>}
 
             {/* ROLE */}
-            <label style={ms.label}>Role</label>
-            <select style={ms.input} value={editRole} onChange={e => setEditRole(e.target.value)}>
-              {allowedRoles.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+<label style={ms.label}>Role</label>
+<select style={ms.input} value={editRole} onChange={e => setEditRole(e.target.value)}>
+  {(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || []).map(r => <option key={r} value={r}>{r}</option>)}
+</select>
 
             {/* STATUS */}
             <label style={ms.label}>Status</label>
