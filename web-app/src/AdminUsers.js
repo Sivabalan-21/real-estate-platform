@@ -7,7 +7,7 @@ const ROLE_OPTIONS_BY_CURRENT_ROLE = {
 };
 const VISIBLE_ROLES_BY_CURRENT_ROLE = {
   "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Admin"],
   "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
 const ROLE_META = {
