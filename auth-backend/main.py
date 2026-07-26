@@ -269,7 +269,7 @@ def get_my_users(
     elif user.role == "Company Admin":
         users = db.query(User).filter(
             User.company_id == user.company_id,
-            User.role == "Admin"
+            User.role == "Company Admin"
         ).all()
 
     elif user.role == "Admin":
