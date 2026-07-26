@@ -17,8 +17,8 @@ function AdminDashboard() {
   const companyName = localStorage.getItem("company_name");
 
   const visibleCards = role === "Company Admin"
-    ? STAT_CARDS
-    : STAT_CARDS.filter(card => card.key !== "Admin");
+  ? STAT_CARDS.filter(card => card.key === "Admin")
+  : STAT_CARDS.filter(card => card.key !== "Admin");
 
   const [stats,   setStats]   = useState({ Admin: 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });
   const [loading, setLoading] = useState(true);
@@ -151,7 +151,7 @@ const s = {
   loader:         { color: "#94a3b8", fontSize: 14, padding: 40 },
 
   /* ── Stat Cards ── */
-  statsGrid:      { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 },
+  statsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 },
   statCard:       { background: "#fff", borderRadius: 10, padding: "18px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 1px 4px rgba(0,0,0,.06)" },
   statIcon:       { fontSize: 26 },
   statValue:      { margin: 0, fontSize: 26, fontWeight: 700, color: "#0f172a" },
