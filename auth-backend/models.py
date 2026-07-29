@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Float
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -82,9 +82,79 @@ class Property(Base):
     created_at   = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    company      = relationship("Company", back_populates="properties")
-    dimensions   = relationship("PropertyDimension", back_populates="property", cascade="all, delete-orphan")
-    assignments  = relationship("PropertyAssignment", back_populates="property", cascade="all, delete-orphan")
+    company = relationship("Company", back_populates="properties")
+
+    dimensions = relationship(
+        "PropertyDimension",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+
+    assignments = relationship(
+        "PropertyAssignment",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+
+    units = relationship(
+        "Unit",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+
+
+class Unit(Base):
+    __tablename__ = "units"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    property_id = Column(
+        String,
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    unit_number = Column(String, nullable=False, index=True)
+
+    type = Column(
+        String,
+        nullable=False
+    )  # Studio, 1BR, 2BR, 3BR, Commercial
+
+    beds = Column(Integer, nullable=True)
+
+    baths = Column(Float, nullable=True)
+
+    sqft = Column(Integer, nullable=True)
+
+    floor = Column(Integer, nullable=True)
+
+    status = Column(
+        String,
+        default="vacant",
+        nullable=False
+    )  # vacant / occupied / maintenance
+
+    rent_amount = Column(Float, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False
+    )
+
+    property = relationship(
+        "Property",
+        back_populates="units"
+    )
 
 
 class PropertyDimension(Base):
