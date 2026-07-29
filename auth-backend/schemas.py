@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, EmailStr
 
 
@@ -69,6 +70,44 @@ class PropertyUpdate(BaseModel):
     description: str | None = None
     total_units: int | None = None
     status: str | None = None
+
+class UnitCreate(BaseModel):
+    unit_number: str
+    type: str
+    beds: Optional[int] = None
+    baths: Optional[float] = None
+    sqft: Optional[int] = None
+    floor: Optional[int] = None
+    status: Optional[str] = "vacant"
+    rent_amount: Optional[float] = None
+
+
+class UnitUpdate(BaseModel):
+    unit_number: Optional[str] = None
+    type: Optional[str] = None
+    beds: Optional[int] = None
+    baths: Optional[float] = None
+    sqft: Optional[int] = None
+    floor: Optional[int] = None
+    status: Optional[str] = None
+    rent_amount: Optional[float] = None
+
+
+class UnitResponse(BaseModel):
+    id: str
+    property_id: str
+    unit_number: str
+    type: str
+    beds: Optional[int] = None
+    baths: Optional[float] = None
+    sqft: Optional[int] = None
+    floor: Optional[int] = None
+    status: str
+    rent_amount: Optional[float] = None
+    has_active_lease: bool
+
+    class Config:
+        from_attributes = True
 
 
 class AssignRequest(BaseModel):

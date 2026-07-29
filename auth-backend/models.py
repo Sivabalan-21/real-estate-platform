@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
+from xmlrpc.client import Boolean
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Float
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Float, Date, Boolean  
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -102,6 +103,12 @@ class Property(Base):
         cascade="all, delete-orphan"
     )
 
+    leases = relationship(
+        "Lease",
+        back_populates="property",
+        cascade="all, delete-orphan"
+    )
+
 
 class Unit(Base):
     __tablename__ = "units"
@@ -154,6 +161,83 @@ class Unit(Base):
     property = relationship(
         "Property",
         back_populates="units"
+    )
+
+    lease = relationship(
+        "Lease",
+        back_populates="unit",
+        uselist=False
+    )
+
+class Lease(Base):
+    __tablename__ = "leases"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    property_id = Column(
+        String,
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    unit_id = Column(
+        String,
+        ForeignKey("units.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    tenant_username = Column(
+        String,
+        ForeignKey("users.username"),
+        nullable=True,
+        index=True,
+    )
+
+    start_date = Column(Date, nullable=False)
+
+    end_date = Column(Date, nullable=True)
+
+    monthly_rent = Column(Float, nullable=False)
+
+    escalation_pct = Column(Float, default=0.0)
+
+    renewal_flag = Column(Boolean, default=False)
+
+    status = Column(
+        String,
+        default="active",
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    property = relationship(
+        "Property",
+        back_populates="leases",
+    )
+
+    unit = relationship(
+        "Unit",
+        back_populates="lease",
+    )
+
+    tenant = relationship(
+        "User",
+        foreign_keys=[tenant_username],
     )
 
 
