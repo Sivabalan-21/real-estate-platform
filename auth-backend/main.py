@@ -998,6 +998,107 @@ def get_units(
 
     return [serialize_unit(u) for u in units]
 
+@app.put(
+    "/units/{unit_id}",
+    response_model=UnitResponse,
+)
+def update_unit(
+    unit_id: str,
+    data: UnitUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    # Role check
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    # Find unit (same company only)
+    unit = (
+        db.query(Unit)
+        .join(Property)
+        .filter(
+            Unit.id == unit_id,
+            Property.company_id == user.company_id,
+        )
+        .first()
+    )
+
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    # Property Manager can update only their own properties
+    if (
+        user.role == ROLE_PROPERTY_MANAGER
+        and unit.property.created_by != user.username
+    ):
+        raise HTTPException(
+            403,
+            "You can only manage your own properties",
+        )
+
+    # Partial update
+    update_data = data.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
+        setattr(unit, key, value)
+
+    db.commit()
+    db.refresh(unit)
+
+    return serialize_unit(unit)
+
+@app.delete("/units/{unit_id}")
+def delete_unit(
+    unit_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    # Role check
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    # Find the unit (company isolation)
+    unit = (
+        db.query(Unit)
+        .join(Property)
+        .filter(
+            Unit.id == unit_id,
+            Property.company_id == user.company_id,
+        )
+        .first()
+    )
+
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    # Property Manager restriction
+    if (
+        user.role == ROLE_PROPERTY_MANAGER
+        and unit.property.created_by != user.username
+    ):
+        raise HTTPException(
+            403,
+            "You can only manage your own properties",
+        )
+
+    # Delete the unit
+    db.delete(unit)
+    db.commit()
+
+    return {
+        "message": "Unit deleted successfully"
+    }
+
 @app.get("/users/me", response_model=None)
 def get_me(db=Depends(get_db), user=Depends(current_user)):
     return {
