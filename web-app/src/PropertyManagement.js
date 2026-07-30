@@ -10,6 +10,8 @@ const UNIT_STATUS_STYLES = {
   maintenance: { bg: "#fef3c7", color: "#92400e", label: "Maintenance" },
 };
 
+const UNIT_TYPE_OPTIONS = ["Studio", "1BHK", "2BHK", "3BHK", "4BHK", "Penthouse", "Other"];
+
 export default function PropertyManagement() {
   const navigate = useNavigate();
   const token    = localStorage.getItem("token");
@@ -30,8 +32,15 @@ export default function PropertyManagement() {
   const [expandedId,    setExpandedId]    = useState(null);       // property id currently expanded
   const [unitsMap,      setUnitsMap]      = useState({});         // { [propertyId]: units[] }
   const [unitsLoading,  setUnitsLoading]  = useState({});         // { [propertyId]: boolean }
-  const [addUnitTarget, setAddUnitTarget] = useState(null);       // property object for "Add Unit" stub modal
+  const [addUnitTarget, setAddUnitTarget] = useState(null);       // property object for the Add Unit modal
   const fetchingUnitsRef = useRef(new Set());                     // guards against duplicate in-flight GETs
+
+  // Add Unit form state
+  const [unitForm, setUnitForm] = useState({
+    unit_number: "", type: "", beds: "", baths: "", sqft: "", floor: "", rent: "", status: "vacant"
+  });
+  const [unitSaving, setUnitSaving] = useState(false);
+  const [unitFormErr, setUnitFormErr] = useState("");
 
   // Create form state
   const [form, setForm] = useState({
@@ -121,6 +130,11 @@ export default function PropertyManagement() {
     setFormErr("");
   };
 
+  const resetUnitForm = () => {
+    setUnitForm({ unit_number: "", type: "", beds: "", baths: "", sqft: "", floor: "", rent: "", status: "vacant" });
+    setUnitFormErr("");
+  };
+
   const addDimension = () => setDimensions(d => [...d, { name: "", unit: "", value: "" }]);
   const removeDimension = (i) => setDimensions(d => d.filter((_, idx) => idx !== i));
   const updateDimension = (i, field, val) => {
@@ -204,6 +218,44 @@ export default function PropertyManagement() {
       showToast("Server error", "error");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // Create a real Unit row via POST /properties/:id/units
+  const handleAddUnit = async () => {
+    if (!unitForm.unit_number.trim()) { setUnitFormErr("Unit number is required"); return; }
+    setUnitSaving(true);
+    setUnitFormErr("");
+    try {
+      const res = await fetch(`${API}/properties/${addUnitTarget.id}/units`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          unit_number: unitForm.unit_number.trim(),
+          type: unitForm.type || null,
+          beds: unitForm.beds !== "" ? parseInt(unitForm.beds) : null,
+          baths: unitForm.baths !== "" ? parseInt(unitForm.baths) : null,
+          sqft: unitForm.sqft !== "" ? parseInt(unitForm.sqft) : null,
+          floor: unitForm.floor !== "" ? parseInt(unitForm.floor) : null,
+          rent_amount: unitForm.rent !== "" ? parseFloat(unitForm.rent) : null,
+          status: unitForm.status,
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) { setUnitFormErr(data.detail || "Failed to add unit"); return; }
+      showToast("Unit added successfully");
+      const propertyId = addUnitTarget.id;
+      setAddUnitTarget(null);
+      resetUnitForm();
+      // Refresh this property's unit list so the new row shows up immediately
+      fetchingUnitsRef.current.delete(propertyId);
+      fetchUnits(propertyId);
+      fetchProperties(); // in case backend recalculates total_units / occupancy off Unit rows
+      fetchMe();          // refresh PM unit quota after consuming one
+    } catch {
+      setUnitFormErr("Server error. Please try again.");
+    } finally {
+      setUnitSaving(false);
     }
   };
 
@@ -319,7 +371,7 @@ export default function PropertyManagement() {
                       <div style={s.unitsEmpty}>
                         <p style={s.unitsEmptyText}>No units added yet</p>
                         {canManage && (
-                          <button style={s.addUnitBtn} onClick={() => setAddUnitTarget(p)}>+ Add Unit</button>
+                          <button style={s.addUnitBtn} onClick={() => { setAddUnitTarget(p); resetUnitForm(); }}>+ Add Unit</button>
                         )}
                       </div>
                     ) : (
@@ -350,7 +402,7 @@ export default function PropertyManagement() {
                           })}
                         </div>
                         {canManage && (
-                          <button style={s.addUnitBtnInline} onClick={() => setAddUnitTarget(p)}>+ Add Unit</button>
+                          <button style={s.addUnitBtnInline} onClick={() => { setAddUnitTarget(p); resetUnitForm(); }}>+ Add Unit</button>
                         )}
                       </>
                     )}
@@ -518,20 +570,78 @@ export default function PropertyManagement() {
         </div>
       )}
 
-      {/* ADD UNIT MODAL (stub — full build tomorrow) */}
+      {/* ADD UNIT MODAL — now a real form, POSTs to /properties/:id/units */}
       {addUnitTarget && (
         <div style={ms.overlay} onClick={() => setAddUnitTarget(null)}>
-          <div style={{ ...ms.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+          <div style={{ ...ms.box, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
             <div style={ms.header}>
               <h3 style={ms.title}>Add Unit — {addUnitTarget.name}</h3>
               <button style={ms.close} onClick={() => setAddUnitTarget(null)}>✕</button>
             </div>
             <div style={ms.body}>
-              <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>
-                The full Add Unit form is coming soon. This stub confirms the wiring from the property card.
-              </p>
+
+              <label style={ms.label}>Unit Number <span style={ms.req}>*</span></label>
+              <input style={ms.input} placeholder="e.g. A-101" value={unitForm.unit_number}
+                onChange={e => setUnitForm(f => ({ ...f, unit_number: e.target.value }))} />
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Type</label>
+                  <select style={ms.input} value={unitForm.type}
+                    onChange={e => setUnitForm(f => ({ ...f, type: e.target.value }))}>
+                    <option value="">Select type</option>
+                    {UNIT_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Status</label>
+                  <select style={ms.input} value={unitForm.status}
+                    onChange={e => setUnitForm(f => ({ ...f, status: e.target.value }))}>
+                    <option value="vacant">Vacant</option>
+                    <option value="occupied">Occupied</option>
+                    <option value="maintenance">Maintenance</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Beds</label>
+                  <input style={ms.input} type="number" min="0" placeholder="0" value={unitForm.beds}
+                    onChange={e => setUnitForm(f => ({ ...f, beds: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Baths</label>
+                  <input style={ms.input} type="number" min="0" placeholder="0" value={unitForm.baths}
+                    onChange={e => setUnitForm(f => ({ ...f, baths: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Floor</label>
+                  <input style={ms.input} type="number" placeholder="0" value={unitForm.floor}
+                    onChange={e => setUnitForm(f => ({ ...f, floor: e.target.value }))} />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Sqft</label>
+                  <input style={ms.input} type="number" min="0" placeholder="0" value={unitForm.sqft}
+                    onChange={e => setUnitForm(f => ({ ...f, sqft: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Rent Amount (₹)</label>
+                  <input style={ms.input} type="number" min="0" placeholder="0" value={unitForm.rent}
+                    onChange={e => setUnitForm(f => ({ ...f, rent: e.target.value }))} />
+                </div>
+              </div>
+
+              {unitFormErr && <p style={ms.errorMsg}>{unitFormErr}</p>}
+
               <div style={ms.footer}>
-                <button style={ms.cancelBtn} onClick={() => setAddUnitTarget(null)}>Close</button>
+                <button style={ms.cancelBtn} onClick={() => setAddUnitTarget(null)}>Cancel</button>
+                <button style={ms.submitBtn} onClick={handleAddUnit} disabled={unitSaving}>
+                  {unitSaving ? "Adding…" : "Add Unit"}
+                </button>
               </div>
             </div>
           </div>
