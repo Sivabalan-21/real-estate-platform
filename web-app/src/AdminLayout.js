@@ -5,7 +5,7 @@ function AdminLayout() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const username  = localStorage.getItem("username");
-  const role      = localStorage.getItem("role") || "Admin";
+  const role      = localStorage.getItem("role") || "Regional Manager";
 
   // FIXED - won't logout on missing status
   useEffect(() => {
@@ -73,7 +73,7 @@ function AdminLayout() {
     { icon: "◈", label: "User Management", path: "/admin/users"     },
   ];
 
-  if (location.pathname === "/admin/properties" && role !== "Admin") {
+  if (location.pathname === "/admin/properties" && role !== "Regional Manager") {
     return (
       <div style={{ padding: 40, color: "#94a3b8", fontFamily: "'DM Sans', sans-serif" }}>
         <h2 style={{ color: "#0f172a" }}>Not authorized</h2>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const STAT_CARDS = [
-  { label: "Admins",            key: "Admin",            icon: "🛡️", color: "#6366f1" },
+  { label: "Regional Managers", key: "Regional Manager",   icon: "🛡️", color: "#6366f1" },
   { label: "Property Managers", key: "Property Manager", icon: "🏢", color: "#0ea5e9" },
   { label: "Tenants",           key: "Tenant",           icon: "🏠", color: "#10b981" },
   { label: "Vendors",           key: "Vendor",           icon: "🔧", color: "#f59e0b" },
@@ -17,10 +17,10 @@ function AdminDashboard() {
   const companyName = localStorage.getItem("company_name");
 
   const visibleCards = role === "Company Admin"
-  ? STAT_CARDS.filter(card => card.key === "Admin")
-  : STAT_CARDS.filter(card => card.key !== "Admin");
+  ? STAT_CARDS.filter(card => card.key === "Regional Manager")
+  : STAT_CARDS.filter(card => card.key !== "Regional Manager");
 
-  const [stats,   setStats]   = useState({ Admin: 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });
+  const [stats,   setStats]   = useState({ "Regional Manager": 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,7 +38,7 @@ function AdminDashboard() {
       })
       .then(data => {
         if (Array.isArray(data)) {
-          const s = { Admin: 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 };
+          const s = { "Regional Manager": 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 };
           data.forEach(u => { if (s[u.role] !== undefined) s[u.role]++; });
           setStats(s);
         }
@@ -71,7 +71,7 @@ function AdminDashboard() {
         </div>
         <span style={s.badge}>
           <span style={s.badgeDot} />
-          {role || "Admin"}
+          {role || "Regional Manager"}
         </span>
       </header>
 

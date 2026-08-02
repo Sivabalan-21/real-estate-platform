@@ -5,7 +5,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const username = localStorage.getItem("username");
   const token = localStorage.getItem("token");
-  const [stats, setStats] = useState({ "Company Admin": 0, Admin: 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });
+  const [stats, setStats] = useState({ "Company Admin": 0, "Regional Manager": 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -16,7 +16,7 @@ function Dashboard() {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          const s = { "Company Admin": 0, Admin: 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 };
+          const s = { "Company Admin": 0, "Regional Manager": 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 };
           data.forEach(u => { if (s[u.role] !== undefined) s[u.role]++; });
           setStats(s);
         }
@@ -27,7 +27,7 @@ function Dashboard() {
 
   const STAT_CARDS = [
     { label: "Company Admins",    key: "Company Admin",    icon: "◆",  color: "#7c3aed" },
-    { label: "Admins",            key: "Admin",            icon: "🛡️",  color: "#6366f1" },
+    { label: "Regional Managers",  key: "Regional Manager",   icon: "🛡️",  color: "#6366f1" },
     { label: "Property Managers", key: "Property Manager", icon: "🏢",  color: "#0ea5e9" },
     { label: "Tenants",           key: "Tenant",           icon: "🏠",  color: "#10b981" },
     { label: "Vendors",           key: "Vendor",           icon: "🔧",  color: "#f59e0b" },

@@ -2,10 +2,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 // ─── ROLE CONFIG ────────────────────────────────────────────────────────────
-const SUPER_ADMIN_CREATE_ROLES = ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"];
+const SUPER_ADMIN_CREATE_ROLES = ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"];
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆" },
-  "Admin":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
+  "Regional Manager":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
   "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
   "Tenant":           { color: "#10b981", bg: "#d1fae5", icon: "🏠" },
   "Vendor":           { color: "#f59e0b", bg: "#fef3c7", icon: "🔧" },
@@ -13,13 +13,13 @@ const ROLE_META = {
 };
 
 const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Admin"],
-  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Regional Manager"],
+  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
 const VISIBLE_ROLES_BY_CURRENT_ROLE = {
-  "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Admin"],
-  "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+  "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin": ["Regional Manager"],
+  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
 };
 
 // ─── MODAL ───────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ function ViewUsers() {
   
 
   const canEdit = (targetRole) => {
-    if (currentRole === "Admin" && targetRole === "Company Admin") return false;
+    if (currentRole === "Regional Manager" && targetRole === "Company Admin") return false;
     return true;
   };
 

@@ -12,9 +12,9 @@ function CreateUser() {
   const token = localStorage.getItem("token");
 
   const allowedRoles = {
-    "Super Admin": ["Company Admin", "Admin", "Property Manager", "Tenant", "Owner", "Vendor"],
-    "Company Admin": ["Admin"],
-    "Admin": ["Property Manager", "Tenant", "Owner", "Vendor"],
+    "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
+    "Company Admin": ["Regional Manager"],
+    "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
     "Property Manager": ["Tenant", "Vendor", "Owner"]
   };
 
@@ -84,7 +84,7 @@ function CreateUser() {
       setTimeout(() => {
         if (currentRole === "Property Manager") {
           navigate("/pm/users/view");
-        } else if (currentRole === "Admin") {
+        } else if (currentRole === "Regional Manager") {
           navigate("/admin/view");
         } else {
           navigate("/users/manage");

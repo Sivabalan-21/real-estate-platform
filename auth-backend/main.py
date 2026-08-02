@@ -280,10 +280,10 @@ def get_my_users(
     elif user.role == "Company Admin":
         users = db.query(User).filter(
             User.company_id == user.company_id,
-            User.role == "Admin"
+            User.role == ROLE_ADMIN
         ).all()
 
-    elif user.role == "Admin":
+    elif user.role == ROLE_ADMIN:
         users = db.query(User).filter(
             User.created_by == user.username
         ).all()

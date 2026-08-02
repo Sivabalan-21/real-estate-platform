@@ -11,7 +11,7 @@ const FIELDS = [
 
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆"  },
-  "Admin":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
+  "Regional Manager":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
   "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
   "Tenant":           { color: "#10b981", bg: "#d1fae5", icon: "🏠" },
   "Vendor":           { color: "#f59e0b", bg: "#fef3c7", icon: "🔧" },

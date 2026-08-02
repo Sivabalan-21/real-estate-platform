@@ -64,7 +64,7 @@ export default function CompanyPortal() {
 
       const r = payload.role;
       if      (r === "Company Admin")    navigate("/admin/dashboard");
-      else if (r === "Admin")            navigate("/admin/dashboard");
+      else if (r === "Regional Manager")            navigate("/admin/dashboard");
       else if (r === "Property Manager") navigate("/pm/dashboard");
       else if (r === "Tenant")           navigate("/tenant/dashboard");
       else if (r === "Owner")            navigate("/owner/dashboard");
@@ -177,7 +177,7 @@ export default function CompanyPortal() {
                     onChange={e => setRole(e.target.value)}
                   >
                     <option value="Company Admin">Company Admin</option>
-                    <option value="Admin">Admin</option>
+                    <option value="Regional Manager">Regional Manager</option>
                     <option value="Property Manager">Property Manager</option>
                     <option value="Tenant">Tenant</option>
                     <option value="Owner">Owner</option>

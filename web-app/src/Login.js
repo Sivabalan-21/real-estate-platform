@@ -60,7 +60,7 @@ function Login() {
           else if (role === "Company Admin") {
             navigate("/admin/dashboard");
           }
-          else if (role === "Admin") {
+          else if (role === "Regional Manager") {
             navigate("/admin/dashboard");
           } 
           else if (role === "Property Manager") {
@@ -153,7 +153,7 @@ function Login() {
             >
               <option value="Super Admin">Super Admin</option>
               <option value="Company Admin">Company Admin</option>
-              <option value="Admin">Admin</option>
+              <option value="Regional Manager">Regional Manager</option>
               <option value="Property Manager">Property Manager</option>
               <option value="Tenant">Tenant</option>
               <option value="Owner">Owner</option>

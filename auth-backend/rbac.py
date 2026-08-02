@@ -1,6 +1,6 @@
 ROLE_SUPER_ADMIN = "Super Admin"
 ROLE_COMPANY_ADMIN = "Company Admin"
-ROLE_ADMIN = "Admin"
+ROLE_ADMIN = "Regional Manager"
 ROLE_PROPERTY_MANAGER = "Property Manager"
 ROLE_TENANT = "Tenant"
 ROLE_OWNER = "Owner"
