@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional
 from pydantic import BaseModel, EmailStr
 
@@ -112,3 +113,22 @@ class UnitResponse(BaseModel):
 
 class AssignRequest(BaseModel):
     pm_username: str
+
+
+class LeaseCreate(BaseModel):
+    unit_id: str
+    tenant_username: Optional[str] = None
+    start_date: date
+    end_date: Optional[date] = None
+    monthly_rent: float
+    escalation_pct: Optional[float] = 0
+    renewal_flag: Optional[bool] = False
+
+
+class LeaseUpdate(BaseModel):
+    tenant_username: Optional[str] = None
+    end_date: Optional[date] = None
+    monthly_rent: Optional[float] = None
+    escalation_pct: Optional[float] = None
+    renewal_flag: Optional[bool] = None
+    status: Optional[str] = None

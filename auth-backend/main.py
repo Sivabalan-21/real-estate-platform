@@ -17,7 +17,7 @@ from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease
-from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT
 from schemas import (
     CreateUserRequest,
     LoginRequest,
@@ -30,6 +30,8 @@ from schemas import (
     UnitUpdate,
     UnitResponse,
     AssignRequest,
+    LeaseCreate,
+    LeaseUpdate,
 )
 from services.user_service import (
     backfill_companies,
@@ -1091,6 +1093,10 @@ def delete_unit(
             "You can only manage your own properties",
         )
 
+    # Block deletion if the unit has an active lease
+    if unit.lease is not None and unit.lease.status == "active":
+        raise HTTPException(400, "Unit has an active lease")
+
     # Delete the unit
     db.delete(unit)
     db.commit()
@@ -1098,6 +1104,193 @@ def delete_unit(
     return {
         "message": "Unit deleted successfully"
     }
+
+
+@app.get("/units/me", response_model=UnitResponse)
+def get_my_unit(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_TENANT:
+        raise HTTPException(403, "Not authorized")
+
+    lease = (
+        db.query(Lease)
+        .filter(
+            Lease.tenant_username == user.username,
+            Lease.status == "active",
+        )
+        .first()
+    )
+
+    if not lease:
+        raise HTTPException(404, "No active unit assigned")
+
+    return serialize_unit(lease.unit)
+
+
+def serialize_lease(lease: Lease):
+    tenant = lease.tenant
+    return {
+        "id": lease.id,
+        "property_id": lease.property_id,
+        "unit_id": lease.unit_id,
+        "tenant_username": lease.tenant_username,
+        "tenant_name": tenant.full_name if tenant else None,
+        "tenant_email": tenant.email if tenant else None,
+        "start_date": lease.start_date,
+        "end_date": lease.end_date,
+        "monthly_rent": lease.monthly_rent,
+        "escalation_pct": lease.escalation_pct,
+        "renewal_flag": lease.renewal_flag,
+        "status": lease.status,
+    }
+
+
+def _unit_for_company(db, unit_id, company_id):
+    return (
+        db.query(Unit)
+        .join(Property)
+        .filter(Unit.id == unit_id, Property.company_id == company_id)
+        .first()
+    )
+
+
+@app.post("/leases", status_code=201)
+def create_lease(
+    data: LeaseCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    unit = _unit_for_company(db, data.unit_id, user.company_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+        raise HTTPException(403, "You can only manage your own properties")
+
+    # Check active lease existence directly, not just unit.status, per spec
+    existing_active = (
+        db.query(Lease)
+        .filter(Lease.unit_id == data.unit_id, Lease.status == "active")
+        .first()
+    )
+    if existing_active:
+        raise HTTPException(400, "Unit already has an active lease")
+
+    lease = Lease(
+        property_id=unit.property_id,
+        unit_id=data.unit_id,
+        tenant_username=data.tenant_username,
+        start_date=data.start_date,
+        end_date=data.end_date,
+        monthly_rent=data.monthly_rent,
+        escalation_pct=data.escalation_pct or 0,
+        renewal_flag=data.renewal_flag or False,
+        status="active",
+    )
+    db.add(lease)
+    unit.status = "occupied"
+    db.commit()
+    db.refresh(lease)
+
+    return serialize_lease(lease)
+
+
+@app.get("/units/{unit_id}/lease")
+def get_unit_lease(
+    unit_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    unit = _unit_for_company(db, unit_id, user.company_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    lease = (
+        db.query(Lease)
+        .filter(Lease.unit_id == unit_id, Lease.status == "active")
+        .first()
+    )
+    if not lease:
+        raise HTTPException(404, "No active lease for this unit")
+
+    return serialize_lease(lease)
+
+
+@app.put("/leases/{lease_id}")
+def update_lease(
+    lease_id: str,
+    data: LeaseUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    lease = (
+        db.query(Lease)
+        .join(Property)
+        .filter(Lease.id == lease_id, Property.company_id == user.company_id)
+        .first()
+    )
+    if not lease:
+        raise HTTPException(404, "Lease not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and lease.property.created_by != user.username:
+        raise HTTPException(403, "You can only manage your own properties")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(lease, key, value)
+
+    # If the lease is being terminated/expired, free up the unit
+    if data.status in ("expired", "terminated"):
+        lease.unit.status = "vacant"
+
+    db.commit()
+    db.refresh(lease)
+
+    return serialize_lease(lease)
+
+
+@app.get("/properties/{property_id}/leases")
+def get_property_leases(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.company_id == user.company_id,
+    ).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
+        raise HTTPException(403, "Not authorized")
+
+    leases = (
+        db.query(Lease)
+        .filter(Lease.property_id == property_id)
+        .order_by(Lease.start_date.desc())
+        .all()
+    )
+    return [serialize_lease(l) for l in leases]
+
 
 @app.get("/users/me", response_model=None)
 def get_me(db=Depends(get_db), user=Depends(current_user)):

@@ -35,12 +35,28 @@ export default function PropertyManagement() {
   const [addUnitTarget, setAddUnitTarget] = useState(null);       // property object for the Add Unit modal
   const fetchingUnitsRef = useRef(new Set());                     // guards against duplicate in-flight GETs
 
-  // Add Unit form state
+  // Add/Edit Unit form state (Day 5)
   const [unitForm, setUnitForm] = useState({
     unit_number: "", type: "", beds: "", baths: "", sqft: "", floor: "", rent: "", status: "vacant"
   });
   const [unitSaving, setUnitSaving] = useState(false);
   const [unitFormErr, setUnitFormErr] = useState("");
+  const [editUnitTarget, setEditUnitTarget] = useState(null); // { property, unit } when editing
+
+  // Lease state (Day 7)
+  const [expandedUnitId, setExpandedUnitId] = useState(null);  // which unit row shows the lease panel
+  const [leaseMap, setLeaseMap] = useState({});                // { [unitId]: lease | null }
+  const [leaseHistoryMap, setLeaseHistoryMap] = useState({});  // { [propertyId]: leases[] }
+  const [leaseLoading, setLeaseLoading] = useState({});        // { [unitId]: boolean }
+  const [leaseModalUnit, setLeaseModalUnit] = useState(null);  // { property, unit } for Create Lease modal
+  const [leaseForm, setLeaseForm] = useState({
+    tenant_username: "", start_date: "", end_date: "", monthly_rent: "", escalation_pct: "", renewal_flag: false
+  });
+  const [leaseSaving, setLeaseSaving] = useState(false);
+  const [leaseFormErr, setLeaseFormErr] = useState("");
+  const [terminateTarget, setTerminateTarget] = useState(null); // lease object pending termination confirm
+  const [terminating, setTerminating] = useState(false);
+  const [historyOpenFor, setHistoryOpenFor] = useState(null);   // unit id whose history section is expanded
 
   // Create form state
   const [form, setForm] = useState({
@@ -111,6 +127,7 @@ export default function PropertyManagement() {
     setExpandedId(prev => {
       const next = prev === propertyId ? null : propertyId;
       if (next && unitsMap[propertyId] === undefined) fetchUnits(propertyId);
+      if (!next) setExpandedUnitId(null); // collapsing the card also closes any open lease panel
       return next;
     });
   };
@@ -124,6 +141,129 @@ export default function PropertyManagement() {
     return { occupied, total: units.length, pct };
   };
 
+  // ---- Lease helpers (Day 7) ----
+
+  const fetchLease = useCallback(async (unitId) => {
+    setLeaseLoading(prev => ({ ...prev, [unitId]: true }));
+    try {
+      const res = await fetch(`${API}/units/${unitId}/lease`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.status === 404) {
+        setLeaseMap(prev => ({ ...prev, [unitId]: null }));
+        return;
+      }
+      const data = await res.json();
+      setLeaseMap(prev => ({ ...prev, [unitId]: res.ok ? data : null }));
+    } catch {
+      showToast("Failed to load lease", "error");
+    } finally {
+      setLeaseLoading(prev => ({ ...prev, [unitId]: false }));
+    }
+  }, [token]);
+
+  const fetchLeaseHistory = useCallback(async (propertyId) => {
+    try {
+      const res = await fetch(`${API}/properties/${propertyId}/leases`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setLeaseHistoryMap(prev => ({ ...prev, [propertyId]: Array.isArray(data) ? data : [] }));
+    } catch {
+      // history is secondary — fail silently, card still works without it
+    }
+  }, [token]);
+
+  // Toggle the lease detail panel for a unit row; fetch lease + history on first open
+  const toggleUnitExpand = (propertyId, unitId) => {
+    setExpandedUnitId(prev => {
+      const next = prev === unitId ? null : unitId;
+      if (next) {
+        if (leaseMap[unitId] === undefined) fetchLease(unitId);
+        if (leaseHistoryMap[propertyId] === undefined) fetchLeaseHistory(propertyId);
+      }
+      return next;
+    });
+  };
+
+  const daysToExpiry = (endDate) => {
+    if (!endDate) return null;
+    return Math.ceil((new Date(endDate) - new Date()) / 86400000);
+  };
+
+  const expiryBadgeStyle = (days) => {
+    if (days == null) return { bg: "#f1f5f9", color: "#475569" };
+    if (days < 0) return { bg: "#fee2e2", color: "#991b1b" };
+    if (days < 30) return { bg: "#fee2e2", color: "#991b1b" };
+    if (days <= 60) return { bg: "#fef3c7", color: "#92400e" };
+    return { bg: "#d1fae5", color: "#065f46" };
+  };
+
+  const resetLeaseForm = () => {
+    setLeaseForm({ tenant_username: "", start_date: "", end_date: "", monthly_rent: "", escalation_pct: "", renewal_flag: false });
+    setLeaseFormErr("");
+  };
+
+  const handleCreateLease = async () => {
+    if (!leaseForm.start_date) { setLeaseFormErr("Start date is required"); return; }
+    if (!leaseForm.monthly_rent) { setLeaseFormErr("Monthly rent is required"); return; }
+    setLeaseSaving(true);
+    setLeaseFormErr("");
+    try {
+      const res = await fetch(`${API}/leases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          unit_id: leaseModalUnit.unit.id,
+          tenant_username: leaseForm.tenant_username || null,
+          start_date: leaseForm.start_date,
+          end_date: leaseForm.end_date || null,
+          monthly_rent: parseFloat(leaseForm.monthly_rent),
+          escalation_pct: leaseForm.escalation_pct ? parseFloat(leaseForm.escalation_pct) : 0,
+          renewal_flag: !!leaseForm.renewal_flag,
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) { setLeaseFormErr(data.detail || "Failed to create lease"); return; }
+      showToast("Lease created — unit marked occupied");
+      const { property, unit } = leaseModalUnit;
+      setLeaseModalUnit(null);
+      resetLeaseForm();
+      fetchLease(unit.id);
+      fetchLeaseHistory(property.id);
+      fetchingUnitsRef.current.delete(property.id);
+      fetchUnits(property.id);
+    } catch {
+      setLeaseFormErr("Server error. Please try again.");
+    } finally {
+      setLeaseSaving(false);
+    }
+  };
+
+  const handleTerminateLease = async () => {
+    if (!terminateTarget) return;
+    setTerminating(true);
+    try {
+      const res = await fetch(`${API}/leases/${terminateTarget.lease.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: "terminated" })
+      });
+      if (!res.ok) { const d = await res.json(); showToast(d.detail || "Failed to terminate lease", "error"); return; }
+      showToast("Lease terminated — unit marked vacant");
+      const { property, unit } = terminateTarget;
+      setTerminateTarget(null);
+      fetchLease(unit.id);
+      fetchLeaseHistory(property.id);
+      fetchingUnitsRef.current.delete(property.id);
+      fetchUnits(property.id);
+    } catch {
+      showToast("Server error", "error");
+    } finally {
+      setTerminating(false);
+    }
+  };
+
   const resetForm = () => {
     setForm({ name: "", address: "", description: "", total_units: "", status: "active" });
     setDimensions([{ name: "", unit: "", value: "" }]);
@@ -133,6 +273,24 @@ export default function PropertyManagement() {
   const resetUnitForm = () => {
     setUnitForm({ unit_number: "", type: "", beds: "", baths: "", sqft: "", floor: "", rent: "", status: "vacant" });
     setUnitFormErr("");
+    setEditUnitTarget(null);
+  };
+
+  // Populate the same modal/form in edit mode, pre-filled with the unit's data
+  const openEditUnit = (property, unit) => {
+    setUnitForm({
+      unit_number: unit.unit_number,
+      type: unit.type || "",
+      beds: unit.beds ?? "",
+      baths: unit.baths ?? "",
+      sqft: unit.sqft ?? "",
+      floor: unit.floor ?? "",
+      rent: unit.rent_amount ?? "",
+      status: unit.status || "vacant",
+    });
+    setUnitFormErr("");
+    setEditUnitTarget({ property, unit });
+    setAddUnitTarget(property); // reuses the same modal shell
   };
 
   const addDimension = () => setDimensions(d => [...d, { name: "", unit: "", value: "" }]);
@@ -221,33 +379,40 @@ export default function PropertyManagement() {
     }
   };
 
-  // Create a real Unit row via POST /properties/:id/units
+  // Creates a new Unit (POST) or, when editUnitTarget is set, updates one (PUT) — Day 5
   const handleAddUnit = async () => {
     if (!unitForm.unit_number.trim()) { setUnitFormErr("Unit number is required"); return; }
+    if (unitForm.rent !== "" && parseFloat(unitForm.rent) <= 0) { setUnitFormErr("Rent must be positive"); return; }
     setUnitSaving(true);
     setUnitFormErr("");
+    const isEditing = !!editUnitTarget;
+    const payload = {
+      unit_number: unitForm.unit_number.trim(),
+      type: unitForm.type || null,
+      beds: unitForm.beds !== "" ? parseInt(unitForm.beds, 10) : null,
+      baths: unitForm.baths !== "" ? parseFloat(unitForm.baths) : null, // parseFloat: 1.5/2.5 baths are valid
+      sqft: unitForm.sqft !== "" ? parseInt(unitForm.sqft, 10) : null,
+      floor: unitForm.floor !== "" ? parseInt(unitForm.floor, 10) : null,
+      rent_amount: unitForm.rent !== "" ? parseFloat(unitForm.rent) : null,
+      status: unitForm.status,
+    };
+    // Unit Number is read-only while editing (protects lease/ticket references) — don't send it on PUT
+    if (isEditing) delete payload.unit_number;
+
     try {
-      const res = await fetch(`${API}/properties/${addUnitTarget.id}/units`, {
-        method: "POST",
+      const url = isEditing ? `${API}/units/${editUnitTarget.unit.id}` : `${API}/properties/${addUnitTarget.id}/units`;
+      const res = await fetch(url, {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          unit_number: unitForm.unit_number.trim(),
-          type: unitForm.type || null,
-          beds: unitForm.beds !== "" ? parseInt(unitForm.beds) : null,
-          baths: unitForm.baths !== "" ? parseInt(unitForm.baths) : null,
-          sqft: unitForm.sqft !== "" ? parseInt(unitForm.sqft) : null,
-          floor: unitForm.floor !== "" ? parseInt(unitForm.floor) : null,
-          rent_amount: unitForm.rent !== "" ? parseFloat(unitForm.rent) : null,
-          status: unitForm.status,
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (!res.ok) { setUnitFormErr(data.detail || "Failed to add unit"); return; }
-      showToast("Unit added successfully");
-      const propertyId = addUnitTarget.id;
+      if (!res.ok) { setUnitFormErr(data.detail || `Failed to ${isEditing ? "update" : "add"} unit`); return; }
+      showToast(isEditing ? "Unit updated successfully" : "Unit added successfully");
+      const propertyId = isEditing ? editUnitTarget.property.id : addUnitTarget.id;
       setAddUnitTarget(null);
       resetUnitForm();
-      // Refresh this property's unit list so the new row shows up immediately
+      // Refresh this property's unit list so the change shows up immediately
       fetchingUnitsRef.current.delete(propertyId);
       fetchUnits(propertyId);
       fetchProperties(); // in case backend recalculates total_units / occupancy off Unit rows
@@ -260,6 +425,7 @@ export default function PropertyManagement() {
   };
 
   const remainingUnits = me ? (me.max_units || 0) - (me.used_units || 0) : null;
+
 
   return (
     <div style={s.page}>
@@ -385,19 +551,112 @@ export default function PropertyManagement() {
                             <span>Floor</span>
                             <span>Rent</span>
                             <span>Status</span>
+                            {canManage && <span>Actions</span>}
                           </div>
                           {unitsMap[p.id].map(u => {
                             const st = UNIT_STATUS_STYLES[u.status] || { bg: "#f1f5f9", color: "#475569", label: u.status };
+                            const isOpen = expandedUnitId === u.id;
+                            const lease = leaseMap[u.id];
+                            const days = lease ? daysToExpiry(lease.end_date) : null;
+                            const badge = expiryBadgeStyle(days);
+                            const history = (leaseHistoryMap[p.id] || []).filter(l => l.unit_id === u.id && l.status !== "active");
                             return (
-                              <div key={u.id} style={s.unitRow}>
-                                <span style={s.unitCellStrong}>{u.unit_number}</span>
-                                <span>{u.type || "—"}</span>
-                                <span>{u.beds ?? "—"}/{u.baths ?? "—"}</span>
-                                <span>{u.sqft ?? "—"}</span>
-                                <span>{u.floor ?? "—"}</span>
-                                <span>{u.rent != null ? `₹${u.rent}` : "—"}</span>
-                                <span style={{ ...s.unitStatusBadge, background: st.bg, color: st.color }}>{st.label}</span>
-                              </div>
+                              <React.Fragment key={u.id}>
+                                <div
+                                  style={{ ...s.unitRow, cursor: "pointer", background: isOpen ? "#f8fafc" : "transparent" }}
+                                  onClick={() => toggleUnitExpand(p.id, u.id)}
+                                >
+                                  <span style={s.unitCellStrong}>{u.unit_number}</span>
+                                  <span>{u.type || "—"}</span>
+                                  <span>{u.beds ?? "—"}/{u.baths ?? "—"}</span>
+                                  <span>{u.sqft ?? "—"}</span>
+                                  <span>{u.floor ?? "—"}</span>
+                                  <span>{u.rent_amount != null ? `₹${u.rent_amount}` : "—"}</span>
+                                  <span style={{ ...s.unitStatusBadge, background: st.bg, color: st.color }}>{st.label}</span>
+                                  {canManage && (
+                                    <span>
+                                      <button
+                                        style={s.unitEditBtn}
+                                        onClick={(e) => { e.stopPropagation(); openEditUnit(p, u); }}
+                                      >
+                                        Edit
+                                      </button>
+                                    </span>
+                                  )}
+                                </div>
+
+                                {isOpen && (
+                                  <div style={s.leasePanel} onClick={(e) => e.stopPropagation()}>
+                                    {leaseLoading[u.id] ? (
+                                      <div style={s.unitsSpinnerRow}><span style={s.spinner} /><span>Loading lease…</span></div>
+                                    ) : lease ? (
+                                      <div style={s.leaseCard}>
+                                        <div style={s.leaseCardHeader}>
+                                          <div>
+                                            <div style={s.leaseTenant}>{lease.tenant_name || lease.tenant_username || "Unassigned"}</div>
+                                            {lease.tenant_email && <div style={s.leaseTenantEmail}>{lease.tenant_email}</div>}
+                                          </div>
+                                          {days != null && (
+                                            <span style={{ ...s.expiryBadge, background: badge.bg, color: badge.color }}>
+                                              {days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d`}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div style={s.leaseMetaRow}>
+                                          <span><strong>Start:</strong> {lease.start_date}</span>
+                                          <span><strong>End:</strong> {lease.end_date || "—"}</span>
+                                          <span><strong>Rent:</strong> ₹{lease.monthly_rent}</span>
+                                        </div>
+                                        {canManage && (
+                                          <button
+                                            style={s.terminateBtn}
+                                            onClick={() => setTerminateTarget({ lease, property: p, unit: u })}
+                                          >
+                                            Terminate Lease
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div style={s.leaseEmpty}>
+                                        <span>No active lease</span>
+                                        {canManage && (
+                                          <button
+                                            style={s.createLeaseBtn}
+                                            onClick={() => { setLeaseModalUnit({ property: p, unit: u }); resetLeaseForm(); }}
+                                          >
+                                            Create Lease
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {history.length > 0 && (
+                                      <div style={s.historySection}>
+                                        <button
+                                          style={s.historyToggle}
+                                          onClick={() => setHistoryOpenFor(prev => prev === u.id ? null : u.id)}
+                                        >
+                                          {historyOpenFor === u.id ? "▾" : "▸"} Lease History ({history.length})
+                                        </button>
+                                        {historyOpenFor === u.id && (
+                                          <div style={s.historyList}>
+                                            {history
+                                              .slice()
+                                              .sort((a, b) => (a.start_date < b.start_date ? 1 : -1))
+                                              .map(h => (
+                                                <div key={h.id} style={s.historyItem}>
+                                                  <span>{h.tenant_name || h.tenant_username || "Unassigned"}</span>
+                                                  <span>{h.start_date} → {h.end_date || "—"}</span>
+                                                  <span style={s.historyStatus}>{h.status}</span>
+                                                </div>
+                                              ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </React.Fragment>
                             );
                           })}
                         </div>
@@ -570,19 +829,25 @@ export default function PropertyManagement() {
         </div>
       )}
 
-      {/* ADD UNIT MODAL — now a real form, POSTs to /properties/:id/units */}
+      {/* ADD/EDIT UNIT MODAL — POST /properties/:id/units to create, PUT /units/:id to edit (Day 5) */}
       {addUnitTarget && (
-        <div style={ms.overlay} onClick={() => setAddUnitTarget(null)}>
+        <div style={ms.overlay} onClick={() => { setAddUnitTarget(null); resetUnitForm(); }}>
           <div style={{ ...ms.box, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
             <div style={ms.header}>
-              <h3 style={ms.title}>Add Unit — {addUnitTarget.name}</h3>
-              <button style={ms.close} onClick={() => setAddUnitTarget(null)}>✕</button>
+              <h3 style={ms.title}>{editUnitTarget ? "Edit Unit" : "Add Unit"} — {addUnitTarget.name}</h3>
+              <button style={ms.close} onClick={() => { setAddUnitTarget(null); resetUnitForm(); }}>✕</button>
             </div>
             <div style={ms.body}>
 
               <label style={ms.label}>Unit Number <span style={ms.req}>*</span></label>
-              <input style={ms.input} placeholder="e.g. A-101" value={unitForm.unit_number}
-                onChange={e => setUnitForm(f => ({ ...f, unit_number: e.target.value }))} />
+              <input
+                style={{ ...ms.input, ...(editUnitTarget ? { background: "#f1f5f9", color: "#94a3b8" } : {}) }}
+                placeholder="e.g. A-101"
+                value={unitForm.unit_number}
+                readOnly={!!editUnitTarget}
+                title={editUnitTarget ? "Unit number can't be changed once created (protects lease/ticket references)" : undefined}
+                onChange={e => setUnitForm(f => ({ ...f, unit_number: e.target.value }))}
+              />
 
               <div style={{ display: "flex", gap: 12 }}>
                 <div style={{ flex: 1 }}>
@@ -612,7 +877,7 @@ export default function PropertyManagement() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={ms.label}>Baths</label>
-                  <input style={ms.input} type="number" min="0" placeholder="0" value={unitForm.baths}
+                  <input style={ms.input} type="number" min="0" step="0.5" placeholder="0" value={unitForm.baths}
                     onChange={e => setUnitForm(f => ({ ...f, baths: e.target.value }))} />
                 </div>
                 <div style={{ flex: 1 }}>
@@ -638,9 +903,91 @@ export default function PropertyManagement() {
               {unitFormErr && <p style={ms.errorMsg}>{unitFormErr}</p>}
 
               <div style={ms.footer}>
-                <button style={ms.cancelBtn} onClick={() => setAddUnitTarget(null)}>Cancel</button>
+                <button style={ms.cancelBtn} onClick={() => { setAddUnitTarget(null); resetUnitForm(); }}>Cancel</button>
                 <button style={ms.submitBtn} onClick={handleAddUnit} disabled={unitSaving}>
-                  {unitSaving ? "Adding…" : "Add Unit"}
+                  {unitSaving ? (editUnitTarget ? "Saving…" : "Adding…") : (editUnitTarget ? "Save Changes" : "Add Unit")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE LEASE MODAL (Day 7) */}
+      {leaseModalUnit && (
+        <div style={ms.overlay} onClick={() => { setLeaseModalUnit(null); resetLeaseForm(); }}>
+          <div style={{ ...ms.box, maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div style={ms.header}>
+              <h3 style={ms.title}>Create Lease — Unit {leaseModalUnit.unit.unit_number}</h3>
+              <button style={ms.close} onClick={() => { setLeaseModalUnit(null); resetLeaseForm(); }}>✕</button>
+            </div>
+            <div style={ms.body}>
+
+              <label style={ms.label}>Tenant Username</label>
+              <input style={ms.input} placeholder="Optional — can assign later" value={leaseForm.tenant_username}
+                onChange={e => setLeaseForm(f => ({ ...f, tenant_username: e.target.value }))} />
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Start Date <span style={ms.req}>*</span></label>
+                  <input style={ms.input} type="date" value={leaseForm.start_date}
+                    onChange={e => setLeaseForm(f => ({ ...f, start_date: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>End Date</label>
+                  <input style={ms.input} type="date" value={leaseForm.end_date}
+                    onChange={e => setLeaseForm(f => ({ ...f, end_date: e.target.value }))} />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Monthly Rent (₹) <span style={ms.req}>*</span></label>
+                  <input style={ms.input} type="number" min="0" placeholder="0" value={leaseForm.monthly_rent}
+                    onChange={e => setLeaseForm(f => ({ ...f, monthly_rent: e.target.value }))} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={ms.label}>Escalation %</label>
+                  <input style={ms.input} type="number" min="0" step="0.1" placeholder="0" value={leaseForm.escalation_pct}
+                    onChange={e => setLeaseForm(f => ({ ...f, escalation_pct: e.target.value }))} />
+                </div>
+              </div>
+
+              <label style={{ ...ms.label, display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                <input type="checkbox" checked={leaseForm.renewal_flag}
+                  onChange={e => setLeaseForm(f => ({ ...f, renewal_flag: e.target.checked }))} />
+                Auto-renewal
+              </label>
+
+              {leaseFormErr && <p style={ms.errorMsg}>{leaseFormErr}</p>}
+
+              <div style={ms.footer}>
+                <button style={ms.cancelBtn} onClick={() => { setLeaseModalUnit(null); resetLeaseForm(); }}>Cancel</button>
+                <button style={ms.submitBtn} onClick={handleCreateLease} disabled={leaseSaving}>
+                  {leaseSaving ? "Creating…" : "Create Lease"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TERMINATE LEASE CONFIRM (Day 7) */}
+      {terminateTarget && (
+        <div style={ms.overlay} onClick={() => setTerminateTarget(null)}>
+          <div style={{ ...ms.box, maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+            <div style={ms.header}>
+              <h3 style={ms.title}>Terminate Lease?</h3>
+              <button style={ms.close} onClick={() => setTerminateTarget(null)}>✕</button>
+            </div>
+            <div style={ms.body}>
+              <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                This will mark unit <strong>{terminateTarget.unit.unit_number}</strong> as vacant. This can't be undone.
+              </p>
+              <div style={ms.footer}>
+                <button style={ms.cancelBtn} onClick={() => setTerminateTarget(null)}>Cancel</button>
+                <button style={{ ...ms.submitBtn, background: "#ef4444" }} onClick={handleTerminateLease} disabled={terminating}>
+                  {terminating ? "Terminating…" : "Terminate Lease"}
                 </button>
               </div>
             </div>
@@ -701,10 +1048,26 @@ const s = {
   addUnitBtn:      { background: "#ede9fe", color: "#6366f1", border: "none", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 },
   addUnitBtnInline:{ marginTop: 10, background: "none", border: "1px dashed #c7d2fe", color: "#6366f1", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, width: "100%" },
   unitTable:       { display: "flex", flexDirection: "column", gap: 4 },
-  unitRow:         { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 0.8fr 0.7fr 0.9fr 1fr", gap: 6, alignItems: "center", fontSize: 12, color: "#334155", padding: "6px 4px", borderBottom: "1px solid #f1f5f9" },
+  unitRow:         { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 0.8fr 0.7fr 0.9fr 1fr 0.7fr", gap: 6, alignItems: "center", fontSize: 12, color: "#334155", padding: "6px 4px", borderBottom: "1px solid #f1f5f9" },
   unitHeaderRow:   { fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, borderBottom: "1px solid #e2e8f0" },
   unitCellStrong:  { fontWeight: 700, color: "#0f172a" },
   unitStatusBadge: { padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, textAlign: "center", justifySelf: "start" },
+  unitEditBtn:     { background: "none", border: "1px solid #e2e8f0", color: "#6366f1", padding: "3px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 },
+  leasePanel:      { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, margin: "4px 0 10px", cursor: "default" },
+  leaseCard:       { display: "flex", flexDirection: "column", gap: 8 },
+  leaseCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
+  leaseTenant:     { fontSize: 13, fontWeight: 700, color: "#0f172a" },
+  leaseTenantEmail:{ fontSize: 11, color: "#64748b" },
+  expiryBadge:     { padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, flexShrink: 0 },
+  leaseMetaRow:    { display: "flex", gap: 16, fontSize: 12, color: "#475569" },
+  terminateBtn:    { alignSelf: "flex-start", background: "#fee2e2", color: "#991b1b", border: "none", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, marginTop: 4 },
+  leaseEmpty:      { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "#64748b" },
+  createLeaseBtn:  { background: "#6366f1", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 },
+  historySection:  { marginTop: 12, paddingTop: 10, borderTop: "1px solid #e2e8f0" },
+  historyToggle:   { background: "none", border: "none", color: "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", padding: 0 },
+  historyList:     { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
+  historyItem:     { display: "flex", justifyContent: "space-between", fontSize: 11, color: "#64748b", padding: "4px 0" },
+  historyStatus:   { textTransform: "capitalize", fontWeight: 600, color: "#94a3b8" },
 };
 
 const ms = {

@@ -1,0 +1,139 @@
+"""
+Unit + Lease API regression suite (Day 3 / Day 6 coverage).
+
+Run with:  pytest tests/test_units.py -v
+"""
+import uuid
+
+from models import Property
+
+
+def make_property(db_session, company, created_by="pm_a"):
+    p = Property(id=str(uuid.uuid4()), company_id=company.id, name="Test Tower", created_by=created_by)
+    db_session.add(p)
+    db_session.commit()
+    return p
+
+
+# ---------- Unit CRUD ----------
+
+def test_create_unit_success(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    client = client_factory(pm_user)
+    res = client.post(f"/properties/{prop.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    assert res.status_code == 201
+    assert res.json()["unit_number"] == "1A"
+    assert res.json()["status"] == "vacant"
+
+
+def test_create_unit_wrong_company_blocked(db_session, company_a, company_b, pm_user, client_factory):
+    prop_b = make_property(db_session, company_b, created_by="someone_else")
+    client = client_factory(pm_user)  # pm_user belongs to company_a
+    res = client.post(f"/properties/{prop_b.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    assert res.status_code == 404
+
+
+def test_get_units_empty_list(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    client = client_factory(pm_user)
+    res = client.get(f"/properties/{prop.id}/units")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_update_unit_partial(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    client = client_factory(pm_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "2B", "type": "2BR", "sqft": 900}).json()
+    res = client.put(f"/units/{unit['id']}", json={"sqft": 1100})
+    assert res.status_code == 200
+    assert res.json()["sqft"] == 1100
+    assert res.json()["unit_number"] == "2B"  # unchanged
+
+
+def test_delete_unit_no_lease(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "3C", "type": "Studio"}).json()
+    res = client.delete(f"/units/{unit['id']}")
+    assert res.status_code == 200
+    assert client.get(f"/properties/{prop.id}/units").json() == []
+
+
+def test_delete_unit_blocked_by_active_lease(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "4D", "type": "Studio"}).json()
+    client.post("/leases", json={
+        "unit_id": unit["id"], "start_date": "2026-01-01", "monthly_rent": 15000,
+    })
+    res = client.delete(f"/units/{unit['id']}")
+    assert res.status_code == 400
+    assert "active lease" in res.json()["detail"]
+
+
+def test_company_b_cannot_edit_company_a_unit(db_session, company_a, company_b, pm_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    client_a = client_factory(pm_user)
+    unit = client_a.post(f"/properties/{prop.id}/units", json={"unit_number": "5E", "type": "Studio"}).json()
+
+    from models import User
+    intruder = User(id=str(uuid.uuid4()), username="pm_b", email="pm_b@example.com",
+                     role=pm_user.role, company_id=company_b.id, status="active")
+    db_session.add(intruder)
+    db_session.commit()
+
+    client_b = client_factory(intruder)
+    res = client_b.put(f"/units/{unit['id']}", json={"sqft": 500})
+    assert res.status_code == 404
+
+
+# ---------- Lease CRUD (Day 6) ----------
+
+def test_create_lease_sets_unit_occupied(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "6F", "type": "1BR"}).json()
+
+    res = client.post("/leases", json={
+        "unit_id": unit["id"], "start_date": "2026-01-01", "monthly_rent": 20000,
+    })
+    assert res.status_code == 201
+    assert res.json()["status"] == "active"
+
+    units = client.get(f"/properties/{prop.id}/units").json()
+    assert units[0]["status"] == "occupied"
+
+
+def test_create_lease_on_already_leased_unit_blocked(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "7G", "type": "1BR"}).json()
+    client.post("/leases", json={"unit_id": unit["id"], "start_date": "2026-01-01", "monthly_rent": 20000})
+
+    res = client.post("/leases", json={"unit_id": unit["id"], "start_date": "2026-02-01", "monthly_rent": 21000})
+    assert res.status_code == 400
+    assert "already has an active lease" in res.json()["detail"]
+
+
+def test_get_unit_lease_404_when_none(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "8H", "type": "1BR"}).json()
+
+    res = client.get(f"/units/{unit['id']}/lease")
+    assert res.status_code == 404
+
+
+def test_terminate_lease_frees_unit(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "9I", "type": "1BR"}).json()
+    lease = client.post("/leases", json={"unit_id": unit["id"], "start_date": "2026-01-01", "monthly_rent": 20000}).json()
+
+    res = client.put(f"/leases/{lease['id']}", json={"status": "terminated"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "terminated"
+
+    units = client.get(f"/properties/{prop.id}/units").json()
+    assert units[0]["status"] == "vacant"
