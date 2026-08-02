@@ -82,6 +82,7 @@ function AdminUsers() {
   const [editStatus,    setEditStatus]    = useState("");
   const [editEmail,     setEditEmail]     = useState("");
   const [editEmailErr,  setEditEmailErr]  = useState("");
+  const [editUnits,     setEditUnits]     = useState("");
   const [sendReset,     setSendReset]     = useState(false);
   const [dangerOpen,    setDangerOpen]    = useState(false);
   const [editing,       setEditing]       = useState(false);
@@ -172,6 +173,7 @@ return matchSearch && matchRole;
     setEditStatus(u.status || "active");
     setEditEmail(u.email || "");
     setEditEmailErr("");
+    setEditUnits(u.max_units ?? "");
     setSendReset(false);
     setDangerOpen(false);
   };
@@ -189,6 +191,15 @@ return matchSearch && matchRole;
     try {
       const body = { role: editRole, status: editStatus, send_reset: sendReset };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
+      if (editRole === "Property Manager" && editUnits !== "") {
+        const unitsNum = Number(editUnits);
+        if (Number.isNaN(unitsNum) || unitsNum < 0) {
+          showToast("Unit quota must be a non-negative number", "error");
+          setEditing(false);
+          return;
+        }
+        body.units = unitsNum;
+      }
       const res = await fetch(
         `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`,
   {
@@ -409,6 +420,25 @@ return matchSearch && matchRole;
 <select style={ms.input} value={editRole} onChange={e => setEditRole(e.target.value)}>
   {(VISIBLE_ROLES_BY_CURRENT_ROLE[currentRole] || []).map(r => <option key={r} value={r}>{r}</option>)}
 </select>
+
+            {editRole === "Property Manager" && (
+              <>
+                <label style={ms.label}>Unit Quota</label>
+                <input
+                  type="number"
+                  min="0"
+                  style={ms.input}
+                  value={editUnits}
+                  placeholder="e.g. 50"
+                  onChange={e => setEditUnits(e.target.value)}
+                />
+                {editUser && (
+                  <p style={{ ...ms.checkDesc, marginTop: -8, marginBottom: 12 }}>
+                    Currently using {editUser.used_units ?? 0} of {editUser.max_units ?? 0} allocated units.
+                  </p>
+                )}
+              </>
+            )}
 
             {/* STATUS */}
             <label style={ms.label}>Status</label>

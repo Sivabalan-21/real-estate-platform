@@ -26,6 +26,7 @@ class UpdateUserRequest(BaseModel):
     send_reset: bool = False
     revoke_sessions: bool = False
     clear_failed_logins: bool = False
+    units: int | None = None
 
 
 class ResetPasswordRequest(BaseModel):

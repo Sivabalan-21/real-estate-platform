@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 import main
 from database import Base, engine, SessionLocal
 from models import Company, User
-from rbac import ROLE_PROPERTY_MANAGER, ROLE_COMPANY_ADMIN
+from rbac import ROLE_PROPERTY_MANAGER, ROLE_COMPANY_ADMIN, ROLE_ADMIN
 
 
 @pytest.fixture(scope="function")
@@ -69,6 +69,24 @@ def admin_user(db_session, company_a):
         username="admin_a",
         email="admin_a@example.com",
         role=ROLE_COMPANY_ADMIN,
+        company_id=company_a.id,
+        status="active",
+    )
+    db_session.add(u)
+    db_session.commit()
+    return u
+
+
+@pytest.fixture
+def regional_admin_user(db_session, company_a):
+    """Role literally named 'Admin' — per ROLE_HIERARCHY in rbac.py, this is
+    the role that actually manages Property Manager accounts (Company Admin
+    only manages 'Admin'-role users directly)."""
+    u = User(
+        id=str(uuid.uuid4()),
+        username="regional_admin_a",
+        email="regional_admin_a@example.com",
+        role=ROLE_ADMIN,
         company_id=company_a.id,
         status="active",
     )

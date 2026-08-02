@@ -304,6 +304,8 @@ def get_my_users(
             "company_slug": u.company.slug if u.company else None,
             "company_id":   u.company_id,
             "created_at":   u.created_at,
+            "max_units":    u.max_units,
+            "used_units":   u.used_units,
         })
 
     return result

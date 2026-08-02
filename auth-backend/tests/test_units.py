@@ -5,7 +5,7 @@ Run with:  pytest tests/test_units.py -v
 """
 import uuid
 
-from models import Property
+from models import Property, User
 
 
 def make_property(db_session, company, created_by="pm_a"):
@@ -208,3 +208,43 @@ def test_company_admin_still_blocked_across_companies(db_session, company_a, com
 
     res = client.post(f"/properties/{prop_b.id}/units", json={"unit_number": "1A", "type": "1BR"})
     assert res.status_code == 404
+
+
+# ---------- PM unit quota allocation ----------
+# Note: per ROLE_HIERARCHY in rbac.py, a Company Admin can only manage
+# 'Admin'-role users directly — it's the 'Admin' role that manages
+# Property Manager accounts. These tests use regional_admin_user to match.
+
+def test_admin_can_set_pm_unit_quota(db_session, regional_admin_user, pm_user, client_factory):
+    client = client_factory(regional_admin_user)
+    res = client.put(f"/users/update/{pm_user.username}", json={"units": 50})
+    assert res.status_code == 200
+    assert res.json()["user"]["max_units"] == 50
+
+
+def test_quota_cannot_be_set_below_used_units(db_session, regional_admin_user, pm_user, client_factory):
+    pm_user.used_units = 10
+    db_session.commit()
+
+    client = client_factory(regional_admin_user)
+    res = client.put(f"/users/update/{pm_user.username}", json={"units": 5})
+    assert res.status_code == 400
+    assert "already in use" in res.json()["detail"]
+
+
+def test_quota_cannot_be_set_on_non_pm_user(db_session, company_a, regional_admin_user, client_factory):
+    tenant = User(
+        id=str(uuid.uuid4()),
+        username="tenant_a",
+        email="tenant_a@example.com",
+        role="Tenant",
+        company_id=company_a.id,
+        status="active",
+        created_by=regional_admin_user.username,
+    )
+    db_session.add(tenant)
+    db_session.commit()
+
+    client = client_factory(regional_admin_user)
+    res = client.put(f"/users/update/{tenant.username}", json={"units": 20})
+    assert res.status_code == 400

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from models import Company, User
 from rbac import (
     ROLE_COMPANY_ADMIN,
+    ROLE_PROPERTY_MANAGER,
     ROLE_SUPER_ADMIN,
     USER_STATUSES,
     can_assign_role,
@@ -281,6 +282,18 @@ def update_user(db: Session, current_user: User, target_username: str, data):
         target.reset_token = token
         target.token_type = "reset"
         target.token_expiry = expiry
+
+    if data.units is not None:
+        target_role = data.role if data.role is not None else target.role
+        if target_role != ROLE_PROPERTY_MANAGER:
+            raise HTTPException(400, "Unit quota can only be set for Property Manager accounts")
+        if data.units < (target.used_units or 0):
+            raise HTTPException(
+                400,
+                f"Cannot set quota below {target.used_units or 0}, the number of units "
+                "already in use by this Property Manager.",
+            )
+        target.max_units = data.units
 
     target.updated_by = current_user.username
     target.updated_at = datetime.utcnow()
