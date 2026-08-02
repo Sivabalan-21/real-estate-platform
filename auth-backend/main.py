@@ -480,25 +480,6 @@ def reset_password_route(data: ResetPasswordRequest, db: Session = Depends(get_d
     return {"message": "Password updated"}
 
 
-@app.get("/users/me", response_model=None)
-def get_me(db=Depends(get_db), user=Depends(current_user)):
-    """Returns current user's profile including company fields.
-    Frontend calls this on dashboard load to refresh company_name/code/slug
-    in localStorage without requiring a re-login."""
-    return {
-        "user_id":      user.id,
-        "username":     user.username,
-        "email":        user.email,
-        "role":         user.role,
-        "status":       user.status,
-        "company_name": user.company.name if user.company else None,
-        "company_code": user.company.company_code if user.company else None,
-        "company_slug": user.company.slug if user.company else None,
-        "company_id":   user.company_id,
-
-    }
-
-
 @app.get("/portal/{slug}")
 def get_portal_info(slug: str, db: Session = Depends(get_db)):
     """Public endpoint — no auth required.

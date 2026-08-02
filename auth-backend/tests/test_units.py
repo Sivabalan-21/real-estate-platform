@@ -248,3 +248,21 @@ def test_quota_cannot_be_set_on_non_pm_user(db_session, company_a, regional_admi
     client = client_factory(regional_admin_user)
     res = client.put(f"/users/update/{tenant.username}", json={"units": 20})
     assert res.status_code == 400
+
+
+def test_users_me_returns_quota_fields(db_session, pm_user, client_factory):
+    """Regression test: main.py previously had two duplicate /users/me route
+    definitions. FastAPI only ever executes the first one registered, which
+    was missing max_units/used_units — so this endpoint silently omitted
+    quota data even after a successful quota update. This test fails if
+    that duplicate ever comes back."""
+    pm_user.max_units = 30
+    pm_user.used_units = 5
+    db_session.commit()
+
+    client = client_factory(pm_user)
+    res = client.get("/users/me")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["max_units"] == 30
+    assert body["used_units"] == 5
