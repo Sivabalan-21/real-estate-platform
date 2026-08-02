@@ -33,7 +33,7 @@ function PMDashboard() {
     fetchData();
   }, [fetchData]);
 
-  const totalUnits = properties.reduce((sum, p) => sum + (p.total_units || 0), 0);
+  const totalUnits = properties.reduce((sum, p) => sum + (p.actual_unit_count || 0), 0);
   const activeCount = properties.filter(p => p.status === "active").length;
   const maxUnits = me?.max_units || 0;
   const usedUnits = me?.used_units || 0;
@@ -108,7 +108,7 @@ function PMDashboard() {
                   </div>
                   <p style={s.cardAddress}>{p.address || "No address provided"}</p>
                   <div style={s.cardFooter}>
-                    <span>{p.total_units} unit(s)</span>
+                    <span>{p.actual_unit_count || 0} unit(s)</span>
                     <span>{p.dimensions?.length || 0} dimension(s)</span>
                   </div>
                 </div>

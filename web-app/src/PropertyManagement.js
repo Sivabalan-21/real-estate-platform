@@ -509,8 +509,8 @@ export default function PropertyManagement() {
 
               {/* Units */}
               <div style={s.unitsRow}>
-                <span style={s.unitsLabel}>Total Units</span>
-                <span style={s.unitsValue}>{p.total_units}</span>
+                <span style={s.unitsLabel}>Units Added</span>
+                <span style={s.unitsValue}>{p.actual_unit_count ?? 0} / {p.total_units ?? 0}</span>
               </div>
 
               {/* Owner */}

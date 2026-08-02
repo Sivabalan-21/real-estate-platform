@@ -9,7 +9,7 @@ from models import Property
 
 
 def make_property(db_session, company, created_by="pm_a"):
-    p = Property(id=str(uuid.uuid4()), company_id=company.id, name="Test Tower", created_by=created_by)
+    p = Property(id=str(uuid.uuid4()), company_id=company.id, name="Test Tower", created_by=created_by, total_units=10)
     db_session.add(p)
     db_session.commit()
     return p
@@ -137,3 +137,74 @@ def test_terminate_lease_frees_unit(db_session, company_a, admin_user, client_fa
 
     units = client.get(f"/properties/{prop.id}/units").json()
     assert units[0]["status"] == "vacant"
+
+
+# ---------- Unit capacity enforcement ----------
+
+def test_unit_creation_blocked_when_capacity_reached(db_session, company_a, pm_user, client_factory):
+    """A property's total_units is a capacity reserved from the PM's quota.
+    create_unit must refuse once that capacity is used up, otherwise the
+    quota system can be bypassed entirely via '+ Add Unit'."""
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    prop.total_units = 1
+    db_session.commit()
+
+    client = client_factory(pm_user)
+
+    first = client.post(f"/properties/{prop.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    assert first.status_code == 201
+
+    second = client.post(f"/properties/{prop.id}/units", json={"unit_number": "1B", "type": "1BR"})
+    assert second.status_code == 400
+    assert "capacity" in second.json()["detail"].lower()
+
+
+def test_property_serializer_reports_actual_unit_count(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=pm_user.username)
+    prop.total_units = 5
+    db_session.commit()
+
+    client = client_factory(pm_user)
+    client.post(f"/properties/{prop.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    client.post(f"/properties/{prop.id}/units", json={"unit_number": "1B", "type": "1BR"})
+
+    res = client.get("/properties").json()
+    this_prop = next(p for p in res if p["id"] == prop.id)
+    assert this_prop["total_units"] == 5          # declared capacity, unchanged
+    assert this_prop["actual_unit_count"] == 2     # real units actually created
+
+
+# ---------- Company Admin restrictions (Day 3) ----------
+
+def test_company_admin_can_manage_units_on_any_pm_property(db_session, company_a, admin_user, client_factory):
+    """Unlike a Property Manager, a Company Admin is not restricted to
+    properties they personally created — they can manage any property
+    within their own company."""
+    prop = make_property(db_session, company_a, created_by="some_other_pm")
+    prop.total_units = 5
+    db_session.commit()
+
+    client = client_factory(admin_user)
+
+    res = client.post(f"/properties/{prop.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    assert res.status_code == 201
+
+    unit_id = res.json()["id"]
+    upd = client.put(f"/units/{unit_id}", json={"rent_amount": 15000})
+    assert upd.status_code == 200
+
+    delete_res = client.delete(f"/units/{unit_id}")
+    assert delete_res.status_code == 200
+
+
+def test_company_admin_still_blocked_across_companies(db_session, company_a, company_b, admin_user, client_factory):
+    """Company isolation still applies to Company Admin — they can manage
+    any property in their own company, but not another company's."""
+    prop_b = make_property(db_session, company_b, created_by="pm_in_company_b")
+    prop_b.total_units = 5
+    db_session.commit()
+
+    client = client_factory(admin_user)  # admin_user belongs to company_a
+
+    res = client.post(f"/properties/{prop_b.id}/units", json={"unit_number": "1A", "type": "1BR"})
+    assert res.status_code == 404

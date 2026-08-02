@@ -870,7 +870,8 @@ def serialize_property(prop: Property):
         "name": prop.name,
         "address": prop.address,
         "description": prop.description,
-        "total_units": prop.total_units,
+        "total_units": prop.total_units,          # capacity allocated from the PM's quota
+        "actual_unit_count": len(prop.units),      # real count of Unit rows actually created
         "status": prop.status,
         "created_by": prop.created_by,
         "dimensions": [
@@ -945,6 +946,17 @@ def create_unit(
         raise HTTPException(
             400,
             "Unit number already exists",
+        )
+
+    current_unit_count = db.query(Unit).filter(
+        Unit.property_id == property_id
+    ).count()
+
+    if current_unit_count >= (prop.total_units or 0):
+        raise HTTPException(
+            400,
+            f"This property's unit capacity ({prop.total_units or 0}) has been reached. "
+            "Edit the property to increase its allocated units before adding more.",
         )
 
     unit = Unit(
