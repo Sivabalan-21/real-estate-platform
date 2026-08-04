@@ -139,6 +139,39 @@ def test_terminate_lease_frees_unit(db_session, company_a, admin_user, client_fa
     assert units[0]["status"] == "vacant"
 
 
+def test_create_lease_with_unknown_tenant_returns_clean_400(db_session, company_a, admin_user, client_factory):
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "10J", "type": "1BR"}).json()
+
+    res = client.post("/leases", json={
+        "unit_id": unit["id"], "tenant_username": "New tenant",
+        "start_date": "2026-08-05", "monthly_rent": 18000,
+    })
+    assert res.status_code == 400
+    assert "No tenant found" in res.json()["detail"]
+
+
+def test_create_lease_with_real_tenant_succeeds(db_session, company_a, admin_user, client_factory):
+    from models import User
+    from rbac import ROLE_TENANT
+    tenant = User(id=str(uuid.uuid4()), username="real_tenant", email="rt@example.com",
+                  role=ROLE_TENANT, company_id=company_a.id, status="active")
+    db_session.add(tenant)
+    db_session.commit()
+
+    prop = make_property(db_session, company_a, created_by=admin_user.username)
+    client = client_factory(admin_user)
+    unit = client.post(f"/properties/{prop.id}/units", json={"unit_number": "11K", "type": "1BR"}).json()
+
+    res = client.post("/leases", json={
+        "unit_id": unit["id"], "tenant_username": "real_tenant",
+        "start_date": "2026-08-05", "monthly_rent": 18000,
+    })
+    assert res.status_code == 201
+    assert res.json()["tenant_username"] == "real_tenant"
+
+
 # ---------- Unit capacity enforcement ----------
 
 def test_unit_creation_blocked_when_capacity_reached(db_session, company_a, pm_user, client_factory):

@@ -1182,6 +1182,16 @@ def create_lease(
     if existing_active:
         raise HTTPException(400, "Unit already has an active lease")
 
+    # Validate the tenant exists up front — without this, a typo'd username hits Postgres's
+    # foreign key constraint and crashes with an unhandled 500 instead of a clean error.
+    if data.tenant_username:
+        tenant = db.query(User).filter(
+            User.username == data.tenant_username,
+            User.company_id == user.company_id,
+        ).first()
+        if not tenant:
+            raise HTTPException(400, f"No tenant found with username '{data.tenant_username}'")
+
     lease = Lease(
         property_id=unit.property_id,
         unit_id=data.unit_id,
@@ -1248,6 +1258,14 @@ def update_lease(
 
     if user.role == ROLE_PROPERTY_MANAGER and lease.property.created_by != user.username:
         raise HTTPException(403, "You can only manage your own properties")
+
+    if data.tenant_username:
+        tenant = db.query(User).filter(
+            User.username == data.tenant_username,
+            User.company_id == user.company_id,
+        ).first()
+        if not tenant:
+            raise HTTPException(400, f"No tenant found with username '{data.tenant_username}'")
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
