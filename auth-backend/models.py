@@ -169,6 +169,12 @@ class Unit(Base):
         uselist=False
     )
 
+    photos = relationship(
+        "UnitPhoto",
+        back_populates="unit",
+        cascade="all, delete-orphan"
+    )
+
 class Lease(Base):
     __tablename__ = "leases"
 
@@ -239,6 +245,26 @@ class Lease(Base):
         "User",
         foreign_keys=[tenant_username],
     )
+
+
+class UnitPhoto(Base):
+    __tablename__ = "unit_photos"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    unit_id = Column(
+        String,
+        ForeignKey("units.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    url = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
+    uploaded_by = Column(String, nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    unit = relationship("Unit", back_populates="photos")
 
 
 class PropertyDimension(Base):

@@ -58,6 +58,16 @@ export default function PropertyManagement() {
   const [terminating, setTerminating] = useState(false);
   const [historyOpenFor, setHistoryOpenFor] = useState(null);   // unit id whose history section is expanded
 
+  // Photo state (Day 8)
+  const [photosMap, setPhotosMap] = useState({});        // { [unitId]: photo[] }
+  const [photosLoading, setPhotosLoading] = useState({}); // { [unitId]: boolean }
+  const [photoUploading, setPhotoUploading] = useState({}); // { [unitId]: boolean }
+  const [photoUploadErr, setPhotoUploadErr] = useState({}); // { [unitId]: string }
+  const [lightboxPhoto, setLightboxPhoto] = useState(null); // { url, filename } for the open lightbox
+  const [deletePhotoTarget, setDeletePhotoTarget] = useState(null); // { unitId, photo } pending delete confirm
+  const [deletingPhoto, setDeletingPhoto] = useState(false);
+  const fileInputRefs = useRef({}); // { [unitId]: <input type=file> DOM node }, one hidden input per unit row
+
   // Create form state
   const [form, setForm] = useState({
     name: "", address: "", description: "", total_units: "", status: "active"
@@ -181,6 +191,7 @@ export default function PropertyManagement() {
       if (next) {
         if (leaseMap[unitId] === undefined) fetchLease(unitId);
         if (leaseHistoryMap[propertyId] === undefined) fetchLeaseHistory(propertyId);
+        if (photosMap[unitId] === undefined) fetchPhotos(unitId);
       }
       return next;
     });
@@ -261,6 +272,81 @@ export default function PropertyManagement() {
       showToast("Server error", "error");
     } finally {
       setTerminating(false);
+    }
+  };
+
+  // ---- Photo helpers (Day 8) ----
+
+  const fetchPhotos = useCallback(async (unitId) => {
+    setPhotosLoading(prev => ({ ...prev, [unitId]: true }));
+    try {
+      const res = await fetch(`${API}/units/${unitId}/photos`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setPhotosMap(prev => ({ ...prev, [unitId]: Array.isArray(data) ? data : [] }));
+    } catch {
+      showToast("Failed to load photos", "error");
+    } finally {
+      setPhotosLoading(prev => ({ ...prev, [unitId]: false }));
+    }
+  }, [token]);
+
+  const handleUploadPhotos = async (unitId, fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    if (files.length > 5) {
+      setPhotoUploadErr(prev => ({ ...prev, [unitId]: "Max 5 photos per upload" }));
+      return;
+    }
+    const oversized = files.find(f => f.size > 5 * 1024 * 1024);
+    if (oversized) {
+      setPhotoUploadErr(prev => ({ ...prev, [unitId]: `'${oversized.name}' is too large (max 5MB)` }));
+      return;
+    }
+
+    setPhotoUploadErr(prev => ({ ...prev, [unitId]: "" }));
+    setPhotoUploading(prev => ({ ...prev, [unitId]: true }));
+    try {
+      const body = new FormData();
+      files.forEach(f => body.append("files", f));
+      const res = await fetch(`${API}/units/${unitId}/photos`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }, // no Content-Type — browser sets multipart boundary
+        body,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPhotoUploadErr(prev => ({ ...prev, [unitId]: data.detail || "Upload failed" }));
+        return;
+      }
+      showToast(files.length > 1 ? `${files.length} photos uploaded` : "Photo uploaded");
+      setPhotosMap(prev => ({ ...prev, [unitId]: [...(prev[unitId] || []), ...data] }));
+    } catch {
+      setPhotoUploadErr(prev => ({ ...prev, [unitId]: "Server error. Please try again." }));
+    } finally {
+      setPhotoUploading(prev => ({ ...prev, [unitId]: false }));
+      if (fileInputRefs.current[unitId]) fileInputRefs.current[unitId].value = ""; // allow re-picking the same file
+    }
+  };
+
+  const handleDeletePhoto = async () => {
+    if (!deletePhotoTarget) return;
+    const { unitId, photo } = deletePhotoTarget;
+    setDeletingPhoto(true);
+    try {
+      const res = await fetch(`${API}/units/${unitId}/photos/${photo.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) { const d = await res.json(); showToast(d.detail || "Delete failed", "error"); return; }
+      showToast("Photo deleted");
+      setPhotosMap(prev => ({ ...prev, [unitId]: (prev[unitId] || []).filter(p => p.id !== photo.id) }));
+      setDeletePhotoTarget(null);
+    } catch {
+      showToast("Server error", "error");
+    } finally {
+      setDeletingPhoto(false);
     }
   };
 
@@ -430,7 +516,11 @@ export default function PropertyManagement() {
   return (
     <div style={s.page}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .unit-photo-delete { opacity: 0; transition: opacity .15s; }
+        .unit-photo-thumb:hover .unit-photo-delete { opacity: 1; }
+      `}</style>
 
       {toast && (
         <div style={{ ...s.toast, background: toast.type === "error" ? "#ef4444" : "#10b981" }}>
@@ -654,6 +744,65 @@ export default function PropertyManagement() {
                                         )}
                                       </div>
                                     )}
+
+                                    {/* Photo gallery (Day 8) */}
+                                    <div style={s.photoSection}>
+                                      <div style={s.photoSectionHeader}>
+                                        <span style={s.photoSectionTitle}>
+                                          Photos {(photosMap[u.id]?.length || 0) > 0 && `(${photosMap[u.id].length})`}
+                                        </span>
+                                        {canManage && (
+                                          <>
+                                            <input
+                                              type="file"
+                                              accept="image/*"
+                                              multiple
+                                              style={{ display: "none" }}
+                                              ref={el => { fileInputRefs.current[u.id] = el; }}
+                                              onChange={(e) => handleUploadPhotos(u.id, e.target.files)}
+                                            />
+                                            <button
+                                              style={s.uploadPhotosBtn}
+                                              disabled={photoUploading[u.id]}
+                                              onClick={() => fileInputRefs.current[u.id]?.click()}
+                                            >
+                                              {photoUploading[u.id] ? "Uploading…" : "Upload Photos"}
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {photoUploadErr[u.id] && <p style={s.photoErrMsg}>{photoUploadErr[u.id]}</p>}
+
+                                      {photosLoading[u.id] ? (
+                                        <div style={s.unitsSpinnerRow}><span style={s.spinner} /><span>Loading photos…</span></div>
+                                      ) : (photosMap[u.id]?.length || 0) === 0 ? (
+                                        <p style={s.photoEmptyText}>No photos yet</p>
+                                      ) : (
+                                        <div style={s.photoStrip}>
+                                          {photosMap[u.id].map(photo => (
+                                            <div key={photo.id} style={s.photoThumbWrap} className="unit-photo-thumb">
+                                              <img
+                                                src={photo.url}
+                                                alt={photo.filename}
+                                                style={s.photoThumb}
+                                                onClick={() => setLightboxPhoto(photo)}
+                                              />
+                                              {canManage && (
+                                                <button
+                                                  style={s.photoDeleteBtn}
+                                                  className="unit-photo-delete"
+                                                  onClick={() => setDeletePhotoTarget({ unitId: u.id, photo })}
+                                                  title="Delete photo"
+                                                >
+                                                  ✕
+                                                </button>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               </React.Fragment>
@@ -994,6 +1143,40 @@ export default function PropertyManagement() {
           </div>
         </div>
       )}
+
+      {/* PHOTO LIGHTBOX (Day 8) */}
+      {lightboxPhoto && (
+        <div style={ms.overlay} onClick={() => setLightboxPhoto(null)}>
+          <div style={s.lightboxBox} onClick={e => e.stopPropagation()}>
+            <button style={s.lightboxClose} onClick={() => setLightboxPhoto(null)}>✕</button>
+            <img src={lightboxPhoto.url} alt={lightboxPhoto.filename} style={s.lightboxImg} />
+            <p style={s.lightboxCaption}>{lightboxPhoto.filename}</p>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE PHOTO CONFIRM (Day 8) */}
+      {deletePhotoTarget && (
+        <div style={ms.overlay} onClick={() => setDeletePhotoTarget(null)}>
+          <div style={{ ...ms.box, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <div style={ms.header}>
+              <h3 style={ms.title}>Delete Photo?</h3>
+              <button style={ms.close} onClick={() => setDeletePhotoTarget(null)}>✕</button>
+            </div>
+            <div style={ms.body}>
+              <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                This removes <strong>{deletePhotoTarget.photo.filename}</strong> permanently. This can't be undone.
+              </p>
+              <div style={ms.footer}>
+                <button style={ms.cancelBtn} onClick={() => setDeletePhotoTarget(null)}>Cancel</button>
+                <button style={{ ...ms.submitBtn, background: "#ef4444" }} onClick={handleDeletePhoto} disabled={deletingPhoto}>
+                  {deletingPhoto ? "Deleting…" : "Delete Photo"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1068,6 +1251,20 @@ const s = {
   historyList:     { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
   historyItem:     { display: "flex", justifyContent: "space-between", fontSize: 11, color: "#64748b", padding: "4px 0" },
   historyStatus:   { textTransform: "capitalize", fontWeight: 600, color: "#94a3b8" },
+  photoSection:    { marginTop: 12, paddingTop: 10, borderTop: "1px solid #e2e8f0" },
+  photoSectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  photoSectionTitle: { fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 },
+  uploadPhotosBtn: { background: "none", border: "1px solid #c7d2fe", color: "#6366f1", padding: "4px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 },
+  photoErrMsg:     { color: "#ef4444", fontSize: 11, margin: "0 0 8px" },
+  photoEmptyText:  { fontSize: 12, color: "#94a3b8", margin: 0 },
+  photoStrip:      { display: "flex", gap: 8, flexWrap: "wrap" },
+  photoThumbWrap:  { position: "relative", width: 72, height: 72, borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0" },
+  photoThumb:      { width: "100%", height: "100%", objectFit: "cover", cursor: "pointer", display: "block" },
+  photoDeleteBtn:  { position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: "50%", border: "none", background: "rgba(15,23,42,0.75)", color: "#fff", fontSize: 10, lineHeight: "18px", cursor: "pointer", padding: 0 },
+  lightboxBox:     { position: "relative", maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center" },
+  lightboxImg:     { maxWidth: "90vw", maxHeight: "80vh", borderRadius: 8, objectFit: "contain" },
+  lightboxCaption: { color: "#f1f5f9", fontSize: 13, marginTop: 10 },
+  lightboxClose:   { position: "absolute", top: -36, right: 0, background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" },
 };
 
 const ms = {

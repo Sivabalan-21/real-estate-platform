@@ -5,6 +5,7 @@ import uuid
 import bcrypt
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
+from typing import List
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,7 +17,7 @@ from database import Base, SessionLocal, engine
 from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT
 from schemas import (
     CreateUserRequest,
@@ -1285,6 +1286,146 @@ def get_property_leases(
         .all()
     )
     return [serialize_lease(l) for l in leases]
+
+
+# ---- Unit photos (Day 8) ----
+
+MAX_PHOTO_SIZE = 5 * 1024 * 1024   # 5MB
+MAX_PHOTOS_PER_UPLOAD = 5
+ALLOWED_PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def serialize_photo(photo: UnitPhoto):
+    return {
+        "id": photo.id,
+        "unit_id": photo.unit_id,
+        "url": photo.url,
+        "filename": photo.filename,
+        "uploaded_by": photo.uploaded_by,
+        "uploaded_at": photo.uploaded_at,
+    }
+
+
+@app.post("/units/{unit_id}/photos", status_code=201)
+async def upload_unit_photos(
+    unit_id: str,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    unit = _unit_for_company(db, unit_id, user.company_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+        raise HTTPException(403, "You can only manage your own properties")
+
+    if len(files) > MAX_PHOTOS_PER_UPLOAD:
+        raise HTTPException(400, f"Max {MAX_PHOTOS_PER_UPLOAD} files per upload")
+
+    # Validate every file up front, before writing anything to disk
+    contents_by_file = []
+    for f in files:
+        if f.content_type not in ALLOWED_PHOTO_TYPES:
+            raise HTTPException(400, f"'{f.filename}' is not a supported image type")
+        data = await f.read()
+        if len(data) > MAX_PHOTO_SIZE:
+            raise HTTPException(400, f"'{f.filename}' is too large (max 5MB)")
+        contents_by_file.append(data)
+
+    upload_dir = os.path.join("uploads", "units", unit_id)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    saved_photos = []
+    for f, data in zip(files, contents_by_file):
+        ext = os.path.splitext(f.filename)[1] or ".jpg"
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(upload_dir, stored_name)
+        with open(filepath, "wb") as out:
+            out.write(data)
+
+        photo = UnitPhoto(
+            unit_id=unit_id,
+            url=f"{BACKEND_URL}/uploads/units/{unit_id}/{stored_name}",
+            filename=f.filename,
+            uploaded_by=user.username,
+        )
+        db.add(photo)
+        saved_photos.append(photo)
+
+    db.commit()
+    for p in saved_photos:
+        db.refresh(p)
+
+    return [serialize_photo(p) for p in saved_photos]
+
+
+@app.get("/units/{unit_id}/photos")
+def get_unit_photos(
+    unit_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    unit = _unit_for_company(db, unit_id, user.company_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    photos = (
+        db.query(UnitPhoto)
+        .filter(UnitPhoto.unit_id == unit_id)
+        .order_by(UnitPhoto.uploaded_at.asc())
+        .all()
+    )
+    return [serialize_photo(p) for p in photos]
+
+
+@app.delete("/units/{unit_id}/photos/{photo_id}")
+def delete_unit_photo(
+    unit_id: str,
+    photo_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    unit = _unit_for_company(db, unit_id, user.company_id)
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+
+    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+        raise HTTPException(403, "You can only manage your own properties")
+
+    photo = db.query(UnitPhoto).filter(
+        UnitPhoto.id == photo_id,
+        UnitPhoto.unit_id == unit_id,
+    ).first()
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+
+    # Best-effort disk cleanup — url is BACKEND_URL + /uploads/units/{unit_id}/{stored_name}
+    stored_name = photo.url.rsplit("/", 1)[-1]
+    filepath = os.path.join("uploads", "units", unit_id, stored_name)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    db.delete(photo)
+    db.commit()
+
+    return {"message": "Photo deleted successfully"}
 
 
 @app.get("/users/me", response_model=None)
