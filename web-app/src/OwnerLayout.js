@@ -2,25 +2,27 @@ import React, { useEffect } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
 
 // Where each role's own dashboard lives — used to bounce a mismatched role
-// away from the PM shell instead of rendering it for the wrong user.
+// away from the Owner shell instead of rendering it for the wrong user.
 const ROLE_HOME = {
   "Super Admin": "/dashboard",
   "Company Admin": "/admin/dashboard",
   "Regional Manager": "/admin/dashboard",
-  "Owner": "/owner/dashboard",
+  "Property Manager": "/pm/dashboard",
   "Tenant": "/tenant/dashboard",
   "Vendor": "/vendor/dashboard",
 };
 
-function PMLayout() {
+function OwnerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const username = localStorage.getItem("username");
   const role = localStorage.getItem("role");
 
-  // Guard: only a Property Manager should ever see this shell.
+  // Guard: only an Owner should ever see this shell. Anyone else who lands here
+  // (stale link, typed URL, etc.) gets bounced to their own dashboard instead
+  // of a blank/broken Owner shell.
   useEffect(() => {
-    if (role && role !== "Property Manager") {
+    if (role && role !== "Owner") {
       navigate(ROLE_HOME[role] || "/", { replace: true });
     }
   }, [role, navigate]);
@@ -32,11 +34,13 @@ function PMLayout() {
   };
 
   const NAV = [
-    { icon: "⊞", label: "Dashboard",  path: "/pm/dashboard" },
-    { icon: "🏢", label: "Properties", path: "/pm/properties" },
+    { icon: "⊞", label: "Dashboard",  path: "/owner/dashboard" },
+    { icon: "🏢", label: "Properties", path: "/owner/properties" },
+    { icon: "✅", label: "Approvals",  path: "/owner/approvals" },
+    { icon: "📊", label: "Reports",    path: "/owner/reports" },
   ];
 
-  if (role && role !== "Property Manager") return null; // redirect effect above is already firing
+  if (role && role !== "Owner") return null; // redirect effect above is already firing
 
   return (
     <div style={s.shell}>
@@ -68,11 +72,11 @@ function PMLayout() {
         {/* USER INFO */}
         <div style={s.sidebarUser}>
           <div style={s.userAvatar}>
-            {(username || "P")[0].toUpperCase()}
+            {(username || "O")[0].toUpperCase()}
           </div>
           <div style={s.userInfo}>
             <p style={s.userInfoName}>{username}</p>
-            <p style={s.userInfoRole}>Property Manager</p>
+            <p style={s.userInfoRole}>Owner</p>
           </div>
         </div>
 
@@ -108,4 +112,4 @@ const s = {
   main:         { flex: 1, overflow: "auto" },
 };
 
-export default PMLayout;
+export default OwnerLayout;

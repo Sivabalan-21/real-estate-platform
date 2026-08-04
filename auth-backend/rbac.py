@@ -27,7 +27,7 @@ ROLE_HIERARCHY = {
         ROLE_OWNER,
         ROLE_VENDOR,
     ],
-    ROLE_COMPANY_ADMIN: [ROLE_ADMIN],
+    ROLE_COMPANY_ADMIN: [ROLE_ADMIN, ROLE_OWNER],
     ROLE_ADMIN: [ROLE_PROPERTY_MANAGER, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR],
     ROLE_PROPERTY_MANAGER: [ROLE_TENANT, ROLE_VENDOR, ROLE_OWNER],
 }
@@ -46,4 +46,4 @@ def is_super_admin(role: str) -> bool:
 
 
 def is_valid_role(role: str) -> bool:
-    return role in ALL_ROLES
+    return role in ALL_ROLES    

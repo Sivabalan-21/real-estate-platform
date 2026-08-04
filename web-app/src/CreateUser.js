@@ -13,7 +13,7 @@ function CreateUser() {
 
   const allowedRoles = {
     "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-    "Company Admin": ["Regional Manager"],
+    "Company Admin": ["Regional Manager", "Owner"],
     "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
     "Property Manager": ["Tenant", "Vendor", "Owner"]
   };

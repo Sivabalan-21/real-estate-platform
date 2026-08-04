@@ -1,4 +1,4 @@
-  import React from "react";
+import React from "react";
   import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
   import Login from "./Login";
@@ -21,6 +21,12 @@
   import CreateUser from "./CreateUser";
   import CompanyPortal from "./CompanyPortal";
   import CompanySettings from "./CompanySettings";
+
+  import OwnerLayout from "./OwnerLayout";
+  import OwnerDashboard from "./OwnerDashboard";
+  import OwnerProperties from "./OwnerProperties";
+  import OwnerApprovals from "./OwnerApprovals";
+  import OwnerReports from "./OwnerReports";
 
   function App() {
     return (
@@ -56,6 +62,14 @@
             <Route path="manage"                 element={<PMUserManagement />} />
             <Route path="users/create"           element={<CreateUser />} />
             <Route path="users/view"             element={<ViewUsers />} />
+          </Route>
+
+          {/* ── OWNER ────────────────────────────────────────── */}
+          <Route path="/owner"                   element={<OwnerLayout />}>
+            <Route path="dashboard"              element={<OwnerDashboard />} />
+            <Route path="properties"             element={<OwnerProperties />} />
+            <Route path="approvals"              element={<OwnerApprovals />} />
+            <Route path="reports"                element={<OwnerReports />} />
           </Route>
 
 

@@ -172,6 +172,53 @@ def test_create_lease_with_real_tenant_succeeds(db_session, company_a, admin_use
     assert res.json()["tenant_username"] == "real_tenant"
 
 
+# ---------- Owner role (Day 9) ----------
+
+def test_company_admin_can_create_owner_user(db_session, company_a, client_factory):
+    from models import User
+    from rbac import ROLE_COMPANY_ADMIN
+    company_admin = User(id=str(uuid.uuid4()), username="co_admin_a", email="coadmin@example.com",
+                          role=ROLE_COMPANY_ADMIN, company_id=company_a.id, status="active")
+    db_session.add(company_admin)
+    db_session.commit()
+
+    client = client_factory(company_admin)
+    res = client.post("/users/create", json={
+        "email": "owner1@example.com", "role": "Owner", "username": "owner1",
+    })
+    assert res.status_code == 200
+
+    created = db_session.query(User).filter(User.username == "owner1").first()
+    assert created is not None
+    assert created.role == "Owner"
+    assert created.company_id == company_a.id
+
+
+def test_property_manager_can_create_owner_user(db_session, company_a, pm_user, client_factory):
+    client = client_factory(pm_user)
+    res = client.post("/users/create", json={
+        "email": "owner2@example.com", "role": "Owner", "username": "owner2",
+    })
+    # Current rbac.py already grants PM -> Owner in ROLE_HIERARCHY (same as Regional
+    # Manager). This test documents that behavior so a future rbac.py change is caught
+    # if it silently narrows or widens who can create Owners.
+    assert res.status_code == 200
+
+
+def test_owner_my_hierarchy_returns_empty(db_session, company_a, client_factory):
+    from models import User
+    from rbac import ROLE_OWNER
+    owner = User(id=str(uuid.uuid4()), username="owner_a", email="owner_a@example.com",
+                 role=ROLE_OWNER, company_id=company_a.id, status="active")
+    db_session.add(owner)
+    db_session.commit()
+
+    client = client_factory(owner)
+    res = client.get("/users/my-hierarchy")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
 # ---------- Unit capacity enforcement ----------
 
 def test_unit_creation_blocked_when_capacity_reached(db_session, company_a, pm_user, client_factory):
