@@ -1306,6 +1306,51 @@ def get_property_leases(
     return [serialize_lease(l) for l in leases]
 
 
+# ---- Owner portfolio (Day 10) ----
+
+@app.get("/owner/portfolio")
+def get_owner_portfolio(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_OWNER:
+        raise HTTPException(403, "Not authorized")
+
+    # Owner-to-property ownership isn't wired up yet — for now an Owner sees every
+    # property in their company, same as Company Admin. Revisit once explicit
+    # per-property ownership exists (tracked as a Phase 2 refinement).
+    properties = (
+        db.query(Property)
+        .filter(Property.company_id == user.company_id)
+        .order_by(Property.name.asc())
+        .all()
+    )
+
+    result = []
+    for prop in properties:
+        units = prop.units
+        total_units = len(units)
+        occupied_count = sum(1 for u in units if u.status == "occupied")
+        vacant_count = sum(1 for u in units if u.status == "vacant")
+        maintenance_count = sum(1 for u in units if u.status == "maintenance")
+
+        result.append({
+            "id": prop.id,
+            "name": prop.name,
+            "address": prop.address,
+            "total_units": total_units,
+            "occupied_count": occupied_count,
+            "vacant_count": vacant_count,
+            "maintenance_count": maintenance_count,
+            # There's no maintenance_tickets table yet (planned for Month 2's ticket
+            # workflow) — open_ticket_count is hardcoded to 0 until that table exists,
+            # rather than querying something that doesn't exist yet.
+            "open_ticket_count": 0,
+        })
+
+    return result
+
+
 # ---- Unit photos (Day 8) ----
 
 MAX_PHOTO_SIZE = 5 * 1024 * 1024   # 5MB

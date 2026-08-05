@@ -25,6 +25,7 @@ import React from "react";
   import OwnerLayout from "./OwnerLayout";
   import OwnerDashboard from "./OwnerDashboard";
   import OwnerProperties from "./OwnerProperties";
+  import OwnerPropertyDetail from "./OwnerPropertyDetail";
   import OwnerApprovals from "./OwnerApprovals";
   import OwnerReports from "./OwnerReports";
 
@@ -68,6 +69,7 @@ import React from "react";
           <Route path="/owner"                   element={<OwnerLayout />}>
             <Route path="dashboard"              element={<OwnerDashboard />} />
             <Route path="properties"             element={<OwnerProperties />} />
+            <Route path="properties/:id"         element={<OwnerPropertyDetail />} />
             <Route path="approvals"              element={<OwnerApprovals />} />
             <Route path="reports"                element={<OwnerReports />} />
           </Route>
