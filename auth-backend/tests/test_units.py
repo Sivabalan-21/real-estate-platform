@@ -219,6 +219,23 @@ def test_owner_my_hierarchy_returns_empty(db_session, company_a, client_factory)
     assert res.json() == []
 
 
+def test_company_admin_hierarchy_includes_owner_users(db_session, company_a, client_factory):
+    from models import User
+    from rbac import ROLE_COMPANY_ADMIN, ROLE_OWNER
+    company_admin = User(id=str(uuid.uuid4()), username="co_admin_b", email="coadminb@example.com",
+                          role=ROLE_COMPANY_ADMIN, company_id=company_a.id, status="active")
+    owner = User(id=str(uuid.uuid4()), username="owner_b", email="owner_b@example.com",
+                 role=ROLE_OWNER, company_id=company_a.id, status="active")
+    db_session.add_all([company_admin, owner])
+    db_session.commit()
+
+    client = client_factory(company_admin)
+    res = client.get("/users/my-hierarchy")
+    assert res.status_code == 200
+    usernames = [u["username"] for u in res.json()]
+    assert "owner_b" in usernames
+
+
 # ---------- Unit capacity enforcement ----------
 
 def test_unit_creation_blocked_when_capacity_reached(db_session, company_a, pm_user, client_factory):

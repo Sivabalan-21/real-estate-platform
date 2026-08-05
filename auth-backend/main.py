@@ -18,7 +18,7 @@ from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto
-from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER
 from schemas import (
     CreateUserRequest,
     LoginRequest,
@@ -281,7 +281,7 @@ def get_my_users(
     elif user.role == "Company Admin":
         users = db.query(User).filter(
             User.company_id == user.company_id,
-            User.role == ROLE_ADMIN
+            User.role.in_([ROLE_ADMIN, ROLE_OWNER])
         ).all()
 
     elif user.role == ROLE_ADMIN:
