@@ -199,10 +199,34 @@ def test_property_manager_can_create_owner_user(db_session, company_a, pm_user, 
     res = client.post("/users/create", json={
         "email": "owner2@example.com", "role": "Owner", "username": "owner2",
     })
-    # Current rbac.py already grants PM -> Owner in ROLE_HIERARCHY (same as Regional
-    # Manager). This test documents that behavior so a future rbac.py change is caught
-    # if it silently narrows or widens who can create Owners.
+    # Current rbac.py grants PM -> Owner in ROLE_HIERARCHY. This test documents that
+    # behavior so a future rbac.py change is caught if it silently narrows or widens
+    # who can create Owners.
     assert res.status_code == 200
+
+
+def test_regional_manager_can_only_create_property_manager(db_session, company_a, client_factory):
+    from models import User
+    from rbac import ROLE_ADMIN
+    regional_manager = User(id=str(uuid.uuid4()), username="rm_a", email="rm_a@example.com",
+                             role=ROLE_ADMIN, company_id=company_a.id, status="active")
+    db_session.add(regional_manager)
+    db_session.commit()
+
+    client = client_factory(regional_manager)
+
+    res = client.post("/users/create", json={
+        "email": "pm_new@example.com", "role": "Property Manager", "username": "pm_new",
+    })
+    assert res.status_code == 200
+
+    for role, email, username in [
+        ("Tenant", "t_new@example.com", "t_new"),
+        ("Owner", "o_new@example.com", "o_new"),
+        ("Vendor", "v_new@example.com", "v_new"),
+    ]:
+        res = client.post("/users/create", json={"email": email, "role": role, "username": username})
+        assert res.status_code == 403, f"Regional Manager should not be able to create {role} per LLD"
 
 
 def test_owner_my_hierarchy_returns_empty(db_session, company_a, client_factory):

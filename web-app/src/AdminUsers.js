@@ -3,12 +3,12 @@ import { useNavigate } from "react-router-dom";
 
 const ROLE_OPTIONS_BY_CURRENT_ROLE = {
   "Company Admin": ["Regional Manager", "Owner"],
-  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
+  "Regional Manager": ["Property Manager"],
 };
 const VISIBLE_ROLES_BY_CURRENT_ROLE = {
   "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
   "Company Admin": ["Regional Manager", "Owner"],
-  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
+  "Regional Manager": ["Property Manager"],
 };
 const ROLE_META = {
   "Regional Manager":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
