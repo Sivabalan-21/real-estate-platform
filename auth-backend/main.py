@@ -457,7 +457,15 @@ Please keep this information safe and do not share your password with anyone.
 Best regards,
 PropOS Team
 """
-    await send_email(user.email, "Welcome to PropOS — Your Login Details", welcome_body)
+    # Registration itself (username/password + lease linkage) is already
+    # committed at this point — a flaky SMTP server must never turn an
+    # already-successful registration into a 500 for the user. Same
+    # fail-soft pattern as the invite-email sends above.
+    try:
+        await send_email(user.email, "Welcome to PropOS — Your Login Details", welcome_body)
+    except Exception as exc:
+        print("WELCOME EMAIL ERROR:", exc)
+
     return {
         "message":      "Registration complete",
         "company_name": user.company.name if user.company else None,
