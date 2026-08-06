@@ -14,11 +14,8 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from models import Company, User
-from rbac import ROLE_SUPER_ADMIN
-from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket
-from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
     LoginRequest,
@@ -283,7 +280,7 @@ def get_my_users(
     elif user.role == "Company Admin":
         users = db.query(User).filter(
             User.company_id == user.company_id,
-            User.role.in_([ROLE_ADMIN, ROLE_OWNER])
+            User.role.in_(ROLE_HIERARCHY[ROLE_COMPANY_ADMIN]),
         ).all()
 
     elif user.role == ROLE_ADMIN:
