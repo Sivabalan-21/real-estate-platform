@@ -5,6 +5,8 @@ Run with:  pytest tests/test_tenant_creation.py -v
 """
 import uuid
 
+from flask import app
+
 from models import Property, User
 from rbac import ROLE_COMPANY_ADMIN
 
