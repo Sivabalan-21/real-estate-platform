@@ -56,6 +56,13 @@ class User(Base):
     max_units = Column(Integer, default=0)
     used_units = Column(Integer, default=0)
 
+    # Tenant-only: the unit this user is linked to at invite time. Kept as a
+    # direct pointer so the Tenant dashboard doesn't have to wait on a Lease
+    # row existing. The Lease (via tenant_username) remains the source of
+    # truth for active occupancy/rent once the PM creates it.
+    unit_id = Column(String, ForeignKey("units.id"), nullable=True, index=True)
+    unit = relationship("Unit", foreign_keys=[unit_id])
+
 class DimensionType(Base):
     __tablename__ = "dimension_types"
 

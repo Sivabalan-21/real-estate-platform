@@ -29,6 +29,11 @@ import React from "react";
   import OwnerApprovals from "./OwnerApprovals";
   import OwnerReports from "./OwnerReports";
 
+  import TenantLayout from "./TenantLayout";
+  import TenantDashboard from "./TenantDashboard";
+  import TenantMaintenance from "./TenantMaintenance";
+  import TenantPayments from "./TenantPayments";
+
   function App() {
     return (
       <Router>
@@ -74,7 +79,12 @@ import React from "react";
             <Route path="reports"                element={<OwnerReports />} />
           </Route>
 
-
+          {/* ── TENANT ───────────────────────────────────────── */}
+          <Route path="/tenant"                  element={<TenantLayout />}>
+            <Route path="dashboard"              element={<TenantDashboard />} />
+            <Route path="maintenance"            element={<TenantMaintenance />} />
+            <Route path="payments"               element={<TenantPayments />} />
+          </Route>
 
         </Routes>
       </Router>

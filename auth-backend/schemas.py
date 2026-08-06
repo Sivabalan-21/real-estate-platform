@@ -16,6 +16,7 @@ class CreateUserRequest(BaseModel):
     company_id: str | None = None
     username: str | None = None
     units: int = 0
+    unit_id: str | None = None  # required when role == "Tenant"
 
 
 class UpdateUserRequest(BaseModel):

@@ -7,11 +7,12 @@ import bcrypt
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from models import Company, User
+from models import Company, Lease, Property, Unit, User
 from rbac import (
     ROLE_COMPANY_ADMIN,
     ROLE_PROPERTY_MANAGER,
     ROLE_SUPER_ADMIN,
+    ROLE_TENANT,
     USER_STATUSES,
     can_assign_role,
     can_create,
@@ -66,6 +67,7 @@ def serialize_user(user: User):
         "updated_by": user.updated_by,
         "max_units": user.max_units,
         "used_units": user.used_units,
+        "unit_id": user.unit_id,
         "created_at": str(user.created_at) if user.created_at else None,
         "updated_at": str(user.updated_at) if user.updated_at else None,
     }
@@ -210,6 +212,32 @@ def create_user(db: Session, current_user: User, data):
 
 
     company = get_company_for_new_user(db, current_user, data)
+
+    unit = None
+    if data.role == ROLE_TENANT:
+        if not data.unit_id:
+            raise HTTPException(400, "unit_id required for Tenant role")
+
+        unit = (
+            db.query(Unit)
+            .join(Property)
+            .filter(Unit.id == data.unit_id, Property.company_id == company.id if company else False)
+            .first()
+        )
+        if not unit:
+            raise HTTPException(400, "Invalid unit")
+
+        # A unit can only have one active lease (unique=True on Lease.unit_id).
+        # If that lease already has a tenant on it, this invite would collide
+        # with an existing occupant.
+        existing_lease = (
+            db.query(Lease)
+            .filter(Lease.unit_id == data.unit_id, Lease.status == "active")
+            .first()
+        )
+        if existing_lease and existing_lease.tenant_username:
+            raise HTTPException(400, "Unit already has a tenant assigned")
+
     token, expiry = create_invite_token()
 
     user = User(
@@ -226,6 +254,7 @@ def create_user(db: Session, current_user: User, data):
         updated_by=current_user.username,
         max_units=data.units,
         used_units=0,
+        unit_id=unit.id if unit else None,
     )
 
     db.add(user)
@@ -413,6 +442,18 @@ def complete_registration(db: Session, token: str, data: dict):
     user.token_type = None
     user.token_expiry = None
     user.updated_at = datetime.utcnow()
+
+    # Tenant's username didn't exist yet when create_user() ran, so if the PM
+    # already created a lease on the linked unit before the tenant registered,
+    # attach it now that we finally have a username to key on.
+    if user.role == ROLE_TENANT and user.unit_id:
+        lease = (
+            db.query(Lease)
+            .filter(Lease.unit_id == user.unit_id, Lease.status == "active")
+            .first()
+        )
+        if lease and not lease.tenant_username:
+            lease.tenant_username = user.username
     
 
     # Commit persists both the new Company row and the updated user.company_id

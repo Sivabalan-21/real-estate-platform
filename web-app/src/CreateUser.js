@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 function CreateUser() {
@@ -25,12 +25,48 @@ function CreateUser() {
     username: "",
     email: "",
     role: forcedRole || "",
-    company_name: ""
+    company_name: "",
+    unit_id: ""
   });
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  // Tenant-only: property + unit picker for unit_id
+  const [properties, setProperties] = useState([]);
+  const [selectedProperty, setSelectedProperty] = useState("");
+  const [units, setUnits] = useState([]);
+  const [unitsLoading, setUnitsLoading] = useState(false);
+
+  const isTenant = form.role === "Tenant";
+
+  useEffect(() => {
+    if (!isTenant) return;
+
+    fetch("http://187.127.180.107/properties", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => setProperties(Array.isArray(data) ? data : []))
+      .catch(() => setProperties([]));
+  }, [isTenant, token]);
+
+  useEffect(() => {
+    if (!isTenant || !selectedProperty) {
+      setUnits([]);
+      return;
+    }
+
+    setUnitsLoading(true);
+    fetch(`http://187.127.180.107/properties/${selectedProperty}/units`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => setUnits(Array.isArray(data) ? data : []))
+      .catch(() => setUnits([]))
+      .finally(() => setUnitsLoading(false));
+  }, [isTenant, selectedProperty, token]);
 
   const createUser = async () => {
     setMessage("");
@@ -38,6 +74,11 @@ function CreateUser() {
 
     if (!form.username || !form.email || !form.role) {
       setError("All fields are required");
+      return;
+    }
+
+    if (isTenant && !form.unit_id) {
+      setError("Please select a unit for this Tenant");
       return;
     }
 
@@ -77,8 +118,11 @@ function CreateUser() {
         username: "",
         email: "",
         role: forcedRole || "",
-        company_name: ""
+        company_name: "",
+        unit_id: ""
       });
+      setSelectedProperty("");
+      setUnits([]);
 
       // 🔥 Smart redirect based on role
       setTimeout(() => {
@@ -152,6 +196,42 @@ function CreateUser() {
               setForm({ ...form, company_name: e.target.value })
             }
           />
+        )}
+
+        {isTenant && (
+          <>
+            <select
+              style={styles.input}
+              value={selectedProperty}
+              onChange={(e) => {
+                setSelectedProperty(e.target.value);
+                setForm({ ...form, unit_id: "" });
+              }}
+            >
+              <option value="">Select Property</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              style={styles.input}
+              value={form.unit_id}
+              onChange={(e) => setForm({ ...form, unit_id: e.target.value })}
+              disabled={!selectedProperty || unitsLoading}
+            >
+              <option value="">
+                {unitsLoading ? "Loading units..." : "Select Unit"}
+              </option>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.unit_number} · {u.type} ({u.status})
+                </option>
+              ))}
+            </select>
+          </>
         )}
 
         <button
