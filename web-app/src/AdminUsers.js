@@ -2,12 +2,12 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Regional Manager", "Owner"],
+  "Company Admin": ["Regional Manager", "Owner", "Tenant"],
   "Regional Manager": ["Property Manager"],
 };
 const VISIBLE_ROLES_BY_CURRENT_ROLE = {
   "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Regional Manager", "Owner"],
+  "Company Admin": ["Regional Manager", "Owner", "Tenant"],
   "Regional Manager": ["Property Manager"],
 };
 const ROLE_META = {
@@ -76,6 +76,12 @@ function AdminUsers() {
   const [inviting,     setInviting]     = useState(false);
   const [inviteErr,    setInviteErr]    = useState("");
 
+  // ── Unit linkage for Tenant invites (Day 11)
+  const [inviteProperties, setInviteProperties] = useState([]);
+  const [inviteUnits,      setInviteUnits]      = useState([]);
+  const [invitePropertyId, setInvitePropertyId] = useState("");
+  const [inviteUnitId,     setInviteUnitId]     = useState("");
+
   // ── Edit modal
   const [editUser,      setEditUser]      = useState(null);
   const [editRole,      setEditRole]      = useState("");
@@ -131,6 +137,23 @@ const matchRole = filterRole === "All" || u.role === filterRole;
 return matchSearch && matchRole;
 });
 
+  // ─── Unit linkage fetches (Day 11) ──────────────────────────────────────
+  useEffect(() => {
+    if (inviteRole !== "Tenant") return;
+    fetch("http://194.164.149.22/api/properties", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => setInviteProperties(Array.isArray(data) ? data : []))
+      .catch(() => setInviteProperties([]));
+  }, [inviteRole, token]);
+
+  useEffect(() => {
+    if (!invitePropertyId) { setInviteUnits([]); return; }
+    fetch(`http://194.164.149.22/api/properties/${invitePropertyId}/units`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => setInviteUnits(Array.isArray(data) ? data : []))
+      .catch(() => setInviteUnits([]));
+  }, [invitePropertyId, token]);
+
   // ─── INVITE ───────────────────────────────────────────────────────────────
   const handleInvite = async () => {
     if (!inviteEmail.trim()) { setInviteErr("Email is required"); return; }
@@ -143,13 +166,22 @@ return matchSearch && matchRole;
       return;
     }
 
+    if (inviteRole === "Tenant" && !inviteUnitId) {
+      setInviteErr("Please select a unit for this tenant");
+      return;
+    }
+
     setInviting(true);
     setInviteErr("");
     try {
       const res = await fetch("http://194.164.149.22/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole })
+        body: JSON.stringify({
+          email: inviteEmail,
+          role: inviteRole,
+          unit_id: inviteRole === "Tenant" ? inviteUnitId : undefined,
+        })
       });
       const data = await res.json();
       if (!res.ok) { setInviteErr(data.detail || "Failed to send invite"); return; }
@@ -158,6 +190,9 @@ return matchSearch && matchRole;
       setShowInvite(false);
       setInviteEmail("");
       setInviteRole(allowedRoles[0] || "");
+      setInvitePropertyId("");
+      setInviteUnitId("");
+      setInviteUnits([]);
       fetchUsers();
     } catch {
       setInviteErr("Server error. Please try again.");
@@ -376,9 +411,38 @@ return matchSearch && matchRole;
             />
 
             <label style={ms.label}>Assign Role <span style={ms.req}>*</span></label>
-            <select style={ms.input} value={inviteRole} onChange={e => setInviteRole(e.target.value)}>
+            <select style={ms.input} value={inviteRole} onChange={e => { setInviteRole(e.target.value); setInvitePropertyId(""); setInviteUnitId(""); }}>
               {allowedRoles.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
+
+            {inviteRole === "Tenant" && (
+              <>
+                <label style={ms.label}>Property <span style={ms.req}>*</span></label>
+                <select
+                  style={ms.input}
+                  value={invitePropertyId}
+                  onChange={e => { setInvitePropertyId(e.target.value); setInviteUnitId(""); }}
+                >
+                  <option value="">Select property</option>
+                  {inviteProperties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+
+                <label style={ms.label}>Unit <span style={ms.req}>*</span></label>
+                <select
+                  style={ms.input}
+                  value={inviteUnitId}
+                  onChange={e => setInviteUnitId(e.target.value)}
+                  disabled={!invitePropertyId}
+                >
+                  <option value="">{invitePropertyId ? "Select unit" : "Select a property first"}</option>
+                  {inviteUnits.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.unit_number}{u.status === "occupied" ? " (occupied)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
             {/* ✅ ROLE RESTRICTION NOTE */}
             <div style={ms.infoBox}>
