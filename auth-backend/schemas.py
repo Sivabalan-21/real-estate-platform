@@ -145,3 +145,17 @@ class LeaseUpdate(BaseModel):
     escalation_pct: Optional[float] = None
     renewal_flag: Optional[bool] = None
     status: Optional[str] = None
+
+
+class MaintenanceTicketCreate(BaseModel):
+    unit_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    priority: Optional[str] = "normal"
+
+
+class MaintenanceTicketUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None

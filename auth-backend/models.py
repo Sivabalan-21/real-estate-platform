@@ -192,6 +192,43 @@ class Unit(Base):
         cascade="all, delete-orphan"
     )
 
+class MaintenanceTicket(Base):
+    __tablename__ = "maintenance_tickets"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    property_id = Column(
+        String,
+        ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    unit_id = Column(
+        String,
+        ForeignKey("units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+
+    # open -> in_progress -> closed. "Open tickets" for dashboard purposes
+    # means anything not yet closed (open or in_progress).
+    status = Column(String, default="open", nullable=False, index=True)
+
+    priority = Column(String, default="normal", nullable=False)  # low / normal / high / urgent
+
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+
+    property = relationship("Property")
+    unit = relationship("Unit")
+
+
 class Lease(Base):
     __tablename__ = "leases"
 

@@ -17,7 +17,7 @@ from database import Base, SessionLocal, engine
 from models import Company, User
 from rbac import ROLE_SUPER_ADMIN
 from schemas import CreateUserRequest, LoginRequest, ResetPasswordRequest, UpdateUserRequest
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER
 from schemas import (
     CreateUserRequest,
@@ -33,6 +33,8 @@ from schemas import (
     AssignRequest,
     LeaseCreate,
     LeaseUpdate,
+    MaintenanceTicketCreate,
+    MaintenanceTicketUpdate,
 )
 from services.user_service import (
     backfill_companies,
@@ -1334,6 +1336,15 @@ def get_owner_portfolio(
         vacant_count = sum(1 for u in units if u.status == "vacant")
         maintenance_count = sum(1 for u in units if u.status == "maintenance")
 
+        open_ticket_count = (
+            db.query(MaintenanceTicket)
+            .filter(
+                MaintenanceTicket.property_id == prop.id,
+                MaintenanceTicket.status != "closed",
+            )
+            .count()
+        )
+
         result.append({
             "id": prop.id,
             "name": prop.name,
@@ -1342,13 +1353,154 @@ def get_owner_portfolio(
             "occupied_count": occupied_count,
             "vacant_count": vacant_count,
             "maintenance_count": maintenance_count,
-            # There's no maintenance_tickets table yet (planned for Month 2's ticket
-            # workflow) — open_ticket_count is hardcoded to 0 until that table exists,
-            # rather than querying something that doesn't exist yet.
-            "open_ticket_count": 0,
+            "open_ticket_count": open_ticket_count,
         })
 
     return result
+
+
+# ---- Maintenance tickets (Day 10) ----
+# Backs the open_ticket_count on /owner/portfolio and property detail pages.
+# Full tenant-facing submission workflow (with vendor assignment etc.) is a
+# later day; this is the minimum CRUD needed for PM/Admin to log and close
+# tickets so the dashboard counts are real.
+
+def serialize_ticket(ticket: MaintenanceTicket):
+    return {
+        "id": ticket.id,
+        "property_id": ticket.property_id,
+        "unit_id": ticket.unit_id,
+        "title": ticket.title,
+        "description": ticket.description,
+        "status": ticket.status,
+        "priority": ticket.priority,
+        "created_by": ticket.created_by,
+        "created_at": ticket.created_at,
+        "updated_at": ticket.updated_at,
+        "closed_at": ticket.closed_at,
+    }
+
+
+TICKET_STATUSES = ("open", "in_progress", "closed")
+TICKET_PRIORITIES = ("low", "normal", "high", "urgent")
+
+
+@app.post("/properties/{property_id}/maintenance-tickets", status_code=201)
+def create_maintenance_ticket(
+    property_id: str,
+    data: MaintenanceTicketCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+        ROLE_TENANT,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.company_id == user.company_id,
+    ).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    if user.role == ROLE_TENANT and user.unit_id and (not data.unit_id):
+        # Tenants raising a ticket without specifying a unit get their own.
+        data.unit_id = user.unit_id
+
+    if data.unit_id:
+        unit = db.query(Unit).filter(
+            Unit.id == data.unit_id, Unit.property_id == property_id
+        ).first()
+        if not unit:
+            raise HTTPException(400, "Invalid unit for this property")
+
+    if data.priority and data.priority not in TICKET_PRIORITIES:
+        raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
+
+    ticket = MaintenanceTicket(
+        property_id=property_id,
+        unit_id=data.unit_id,
+        title=data.title,
+        description=data.description,
+        priority=data.priority or "normal",
+        status="open",
+        created_by=user.username,
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    return serialize_ticket(ticket)
+
+
+@app.get("/properties/{property_id}/maintenance-tickets")
+def get_property_maintenance_tickets(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.company_id == user.company_id,
+    ).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    tickets = (
+        db.query(MaintenanceTicket)
+        .filter(MaintenanceTicket.property_id == property_id)
+        .order_by(MaintenanceTicket.created_at.desc())
+        .all()
+    )
+    return [serialize_ticket(t) for t in tickets]
+
+
+@app.put("/maintenance-tickets/{ticket_id}")
+def update_maintenance_ticket(
+    ticket_id: str,
+    data: MaintenanceTicketUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    ticket = (
+        db.query(MaintenanceTicket)
+        .join(Property)
+        .filter(MaintenanceTicket.id == ticket_id, Property.company_id == user.company_id)
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+
+    if data.title is not None:
+        ticket.title = data.title
+    if data.description is not None:
+        ticket.description = data.description
+    if data.priority is not None:
+        if data.priority not in TICKET_PRIORITIES:
+            raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
+        ticket.priority = data.priority
+    if data.status is not None:
+        if data.status not in TICKET_STATUSES:
+            raise HTTPException(400, f"Invalid status. Must be one of {TICKET_STATUSES}")
+        ticket.status = data.status
+        ticket.closed_at = datetime.utcnow() if data.status == "closed" else None
+
+    ticket.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(ticket)
+    return serialize_ticket(ticket)
 
 
 # ---- Unit photos (Day 8) ----
