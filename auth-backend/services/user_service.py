@@ -9,10 +9,13 @@ from sqlalchemy.orm import Session
 
 from models import Company, Lease, Property, Unit, User
 from rbac import (
+    ID_TYPES,
     ROLE_COMPANY_ADMIN,
     ROLE_PROPERTY_MANAGER,
     ROLE_SUPER_ADMIN,
     ROLE_TENANT,
+    TENANT_STATUS_TRANSITIONS,
+    TENANT_STATUSES,
     USER_STATUSES,
     can_assign_role,
     can_create,
@@ -68,6 +71,10 @@ def serialize_user(user: User):
         "max_units": user.max_units,
         "used_units": user.used_units,
         "unit_id": user.unit_id,
+        "tenant_status": user.tenant_status,
+        "id_type": user.id_type,
+        "id_number": user.id_number,
+        "move_in_date": str(user.move_in_date) if user.move_in_date else None,
         "created_at": str(user.created_at) if user.created_at else None,
         "updated_at": str(user.updated_at) if user.updated_at else None,
     }
@@ -238,6 +245,9 @@ def create_user(db: Session, current_user: User, data):
         if existing_lease and existing_lease.tenant_username:
             raise HTTPException(400, "Unit already has a tenant assigned")
 
+        if data.id_type and data.id_type not in ID_TYPES:
+            raise HTTPException(400, f"Invalid id_type. Must be one of {ID_TYPES}")
+
     token, expiry = create_invite_token()
 
     user = User(
@@ -255,6 +265,12 @@ def create_user(db: Session, current_user: User, data):
         max_units=data.units,
         used_units=0,
         unit_id=unit.id if unit else None,
+        # Tenant Service LLD: profile starts in ONBOARDING until documents
+        # are uploaded and verified (that transition happens separately).
+        tenant_status="ONBOARDING" if data.role == ROLE_TENANT else None,
+        id_type=data.id_type if data.role == ROLE_TENANT else None,
+        id_number=data.id_number if data.role == ROLE_TENANT else None,
+        move_in_date=(data.move_in_date if data.role == ROLE_TENANT else None),
     )
 
     db.add(user)
@@ -323,6 +339,47 @@ def update_user(db: Session, current_user: User, target_username: str, data):
                 "already in use by this Property Manager.",
             )
         target.max_units = data.units
+
+    # --- Tenant Service LLD: ONBOARDING -> ACTIVE -> MOVED_OUT ------------
+    if data.tenant_status is not None:
+        if target.role != ROLE_TENANT:
+            raise HTTPException(400, "tenant_status only applies to Tenant accounts")
+        if data.tenant_status not in TENANT_STATUSES:
+            raise HTTPException(400, f"Invalid tenant_status. Must be one of {TENANT_STATUSES}")
+
+        current_status = target.tenant_status or "ONBOARDING"
+        if data.tenant_status != current_status:
+            if data.tenant_status not in TENANT_STATUS_TRANSITIONS.get(current_status, set()):
+                raise HTTPException(
+                    400, f"Cannot move tenant_status from {current_status} to {data.tenant_status}"
+                )
+            target.tenant_status = data.tenant_status
+
+            if data.tenant_status == "MOVED_OUT":
+                # LLD Step 4 — Move Out: revoke login (Auth Service), free the
+                # unit and end the lease (Property Service). Finance/Kafka
+                # notification hooks are separate follow-ups.
+                target.status = "suspended"
+                if target.unit_id:
+                    lease = (
+                        db.query(Lease)
+                        .filter(Lease.unit_id == target.unit_id, Lease.status == "active")
+                        .first()
+                    )
+                    if lease:
+                        lease.status = "terminated"
+                        lease.unit.status = "vacant"
+
+    if data.id_type is not None:
+        if data.id_type not in ID_TYPES:
+            raise HTTPException(400, f"Invalid id_type. Must be one of {ID_TYPES}")
+        target.id_type = data.id_type
+
+    if data.id_number is not None:
+        target.id_number = data.id_number
+
+    if data.move_in_date is not None:
+        target.move_in_date = data.move_in_date
 
     target.updated_by = current_user.username
     target.updated_at = datetime.utcnow()

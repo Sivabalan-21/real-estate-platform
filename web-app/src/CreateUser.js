@@ -26,7 +26,10 @@ function CreateUser() {
     email: "",
     role: forcedRole || "",
     company_name: "",
-    unit_id: ""
+    unit_id: "",
+    id_type: "",
+    id_number: "",
+    move_in_date: ""
   });
 
   const [loading, setLoading] = useState(false);
@@ -95,6 +98,13 @@ function CreateUser() {
 
     setLoading(true);
 
+    const payload = {
+      ...form,
+      id_type: form.id_type || null,
+      id_number: form.id_number || null,
+      move_in_date: form.move_in_date || null,
+    };
+
     try {
       const res = await fetch("http://187.127.180.107/users/create", {
         method: "POST",
@@ -102,7 +112,7 @@ function CreateUser() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -119,7 +129,10 @@ function CreateUser() {
         email: "",
         role: forcedRole || "",
         company_name: "",
-        unit_id: ""
+        unit_id: "",
+        id_type: "",
+        id_number: "",
+        move_in_date: ""
       });
       setSelectedProperty("");
       setUnits([]);
@@ -231,6 +244,32 @@ function CreateUser() {
                 </option>
               ))}
             </select>
+
+            <select
+              style={styles.input}
+              value={form.id_type}
+              onChange={(e) => setForm({ ...form, id_type: e.target.value })}
+            >
+              <option value="">ID Type (optional)</option>
+              <option value="AADHAR">Aadhar</option>
+              <option value="PASSPORT">Passport</option>
+              <option value="DRIVING_LICENSE">Driving License</option>
+            </select>
+
+            <input
+              style={styles.input}
+              placeholder="ID Number (optional)"
+              value={form.id_number}
+              onChange={(e) => setForm({ ...form, id_number: e.target.value })}
+            />
+
+            <label style={styles.dateLabel}>Move-in Date (optional)</label>
+            <input
+              type="date"
+              style={styles.input}
+              value={form.move_in_date}
+              onChange={(e) => setForm({ ...form, move_in_date: e.target.value })}
+            />
           </>
         )}
 
@@ -275,6 +314,12 @@ const styles = {
     padding: "10px",
     borderRadius: "6px",
     marginBottom: "10px"
+  },
+  dateLabel: {
+    display: "block",
+    fontSize: "12px",
+    color: "#64748b",
+    marginBottom: "4px"
   },
   button: {
     width: "100%",

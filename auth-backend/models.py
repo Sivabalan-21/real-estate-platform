@@ -63,6 +63,16 @@ class User(Base):
     unit_id = Column(String, ForeignKey("units.id"), nullable=True, index=True)
     unit = relationship("Unit", foreign_keys=[unit_id])
 
+    # Tenant Service LLD — person-tenant profile fields. Nullable/unused for
+    # every other role.
+    id_type = Column(String, nullable=True)        # AADHAR / PASSPORT / DRIVING_LICENSE
+    id_number = Column(String, nullable=True)
+    move_in_date = Column(Date, nullable=True)
+    # ONBOARDING -> ACTIVE -> MOVED_OUT. Independent of `status` above, which
+    # controls login access. A tenant can be `status="active"` (can log in)
+    # while still `tenant_status="ONBOARDING"` (documents not yet verified).
+    tenant_status = Column(String, nullable=True, index=True)
+
 class DimensionType(Base):
     __tablename__ = "dimension_types"
 

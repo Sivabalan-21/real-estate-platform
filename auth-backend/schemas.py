@@ -18,6 +18,11 @@ class CreateUserRequest(BaseModel):
     units: int = 0
     unit_id: str | None = None  # required when role == "Tenant"
 
+    # Tenant Service LLD — person-tenant profile (optional; role == "Tenant" only)
+    id_type: str | None = None
+    id_number: str | None = None
+    move_in_date: date | None = None
+
 
 class UpdateUserRequest(BaseModel):
     role: str | None = None
@@ -28,6 +33,12 @@ class UpdateUserRequest(BaseModel):
     revoke_sessions: bool = False
     clear_failed_logins: bool = False
     units: int | None = None
+
+    # Tenant Service LLD — person-tenant profile (Tenant role only)
+    tenant_status: str | None = None   # ONBOARDING / ACTIVE / MOVED_OUT
+    id_type: str | None = None
+    id_number: str | None = None
+    move_in_date: date | None = None
 
 
 class ResetPasswordRequest(BaseModel):

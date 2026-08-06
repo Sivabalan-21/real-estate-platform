@@ -18,6 +18,23 @@ ALL_ROLES = [
 
 USER_STATUSES = ["invited", "active", "suspended"]
 
+# --- Tenant Service LLD (person-tenant profile) -----------------------------
+# These are separate from USER_STATUSES: `User.status` gates login/auth for
+# every role. `User.tenant_status` (Tenant role only) tracks the LLD's
+# onboarding/document-verification lifecycle and is independent of whether
+# the tenant can currently log in.
+ID_TYPES = ["AADHAR", "PASSPORT", "DRIVING_LICENSE"]
+TENANT_STATUSES = ["ONBOARDING", "ACTIVE", "MOVED_OUT"]
+
+# Which tenant_status values a given tenant_status may move to. ONBOARDING
+# can be cancelled straight to MOVED_OUT (invited then never moved in);
+# MOVED_OUT is terminal.
+TENANT_STATUS_TRANSITIONS = {
+    "ONBOARDING": {"ACTIVE", "MOVED_OUT"},
+    "ACTIVE": {"MOVED_OUT"},
+    "MOVED_OUT": set(),
+}
+
 ROLE_HIERARCHY = {
     ROLE_SUPER_ADMIN: [
         ROLE_COMPANY_ADMIN,
