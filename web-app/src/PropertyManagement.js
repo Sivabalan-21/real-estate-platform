@@ -68,6 +68,17 @@ export default function PropertyManagement() {
   const [deletingPhoto, setDeletingPhoto] = useState(false);
   const fileInputRefs = useRef({}); // { [unitId]: <input type=file> DOM node }, one hidden input per unit row
 
+  // Maintenance tickets (Day 10)
+  const [expandedTicketsId, setExpandedTicketsId] = useState(null); // property id whose tickets panel is open
+  const [ticketsMap, setTicketsMap] = useState({});                 // { [propertyId]: tickets[] }
+  const [ticketsLoading, setTicketsLoading] = useState({});         // { [propertyId]: boolean }
+  const [showTicketForm, setShowTicketForm] = useState(null);       // property id currently showing the new-ticket form
+  const [ticketForm, setTicketForm] = useState({ title: "", description: "", priority: "normal", unit_id: "" });
+  const [ticketSaving, setTicketSaving] = useState(false);
+  const [ticketFormErr, setTicketFormErr] = useState("");
+  const [closingTicketId, setClosingTicketId] = useState(null);
+  const fetchingTicketsRef = useRef(new Set());
+
   // Create form state
   const [form, setForm] = useState({
     name: "", address: "", description: "", total_units: "", status: "active"
@@ -348,6 +359,102 @@ export default function PropertyManagement() {
     } finally {
       setDeletingPhoto(false);
     }
+  };
+
+  // ---- Maintenance ticket helpers (Day 10) ----
+  // Minimum CRUD for PM/Admin to log and close tickets — this is what feeds
+  // open_ticket_count on the Owner dashboard's /owner/portfolio endpoint.
+  const fetchTickets = useCallback(async (propertyId) => {
+    if (fetchingTicketsRef.current.has(propertyId)) return;
+    fetchingTicketsRef.current.add(propertyId);
+    setTicketsLoading(prev => ({ ...prev, [propertyId]: true }));
+    try {
+      const res = await fetch(`${API}/properties/${propertyId}/maintenance-tickets`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) setTicketsMap(prev => ({ ...prev, [propertyId]: data }));
+    } catch {
+      // leave existing map entry as-is on network failure
+    } finally {
+      setTicketsLoading(prev => ({ ...prev, [propertyId]: false }));
+      fetchingTicketsRef.current.delete(propertyId);
+    }
+  }, [token]);
+
+  const toggleTicketsExpand = (propertyId) => {
+    setExpandedTicketsId(prev => {
+      const next = prev === propertyId ? null : propertyId;
+      if (next && ticketsMap[propertyId] === undefined) fetchTickets(propertyId);
+      return next;
+    });
+  };
+
+  const resetTicketForm = () => setTicketForm({ title: "", description: "", priority: "normal", unit_id: "" });
+
+  const handleCreateTicket = async (propertyId) => {
+    if (!ticketForm.title.trim()) { setTicketFormErr("Title is required"); return; }
+    setTicketSaving(true);
+    setTicketFormErr("");
+    try {
+      const res = await fetch(`${API}/properties/${propertyId}/maintenance-tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: ticketForm.title.trim(),
+          description: ticketForm.description.trim() || null,
+          priority: ticketForm.priority,
+          unit_id: ticketForm.unit_id || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTicketFormErr(data.detail || "Failed to create ticket"); return; }
+      setTicketsMap(prev => ({ ...prev, [propertyId]: [data, ...(prev[propertyId] || [])] }));
+      showToast("Ticket logged");
+      setShowTicketForm(null);
+      resetTicketForm();
+    } catch {
+      setTicketFormErr("Server error. Please try again.");
+    } finally {
+      setTicketSaving(false);
+    }
+  };
+
+  const handleCloseTicket = async (propertyId, ticketId) => {
+    setClosingTicketId(ticketId);
+    try {
+      const res = await fetch(`${API}/maintenance-tickets/${ticketId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: "closed" }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.detail || "Failed to close ticket", "error"); return; }
+      setTicketsMap(prev => ({
+        ...prev,
+        [propertyId]: (prev[propertyId] || []).map(t => (t.id === ticketId ? data : t)),
+      }));
+      showToast("Ticket closed");
+    } catch {
+      showToast("Server error", "error");
+    } finally {
+      setClosingTicketId(null);
+    }
+  };
+
+  const openTicketCount = (propertyId) =>
+    (ticketsMap[propertyId] || []).filter(t => t.status !== "closed").length;
+
+  const TICKET_STATUS_STYLES = {
+    open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+    in_progress: { bg: "#fef3c7", color: "#92400e", label: "In progress" },
+    closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+  };
+  const TICKET_PRIORITY_STYLES = {
+    low:    { bg: "#f1f5f9", color: "#475569" },
+    normal: { bg: "#e0e7ff", color: "#3730a3" },
+    high:   { bg: "#fed7aa", color: "#9a3412" },
+    urgent: { bg: "#fecaca", color: "#991b1b" },
   };
 
   const resetForm = () => {
@@ -818,6 +925,112 @@ export default function PropertyManagement() {
                 )}
               </div>
 
+              {/* Maintenance Tickets (Day 10) */}
+              <div style={s.unitsSection}>
+                <button style={s.unitsToggle} onClick={() => toggleTicketsExpand(p.id)}>
+                  <span>
+                    Maintenance Tickets
+                    {ticketsMap[p.id] !== undefined && openTicketCount(p.id) > 0 && (
+                      <span style={s.ticketCountBadge}>{openTicketCount(p.id)}</span>
+                    )}
+                  </span>
+                  <span style={{ transform: expandedTicketsId === p.id ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s" }}>›</span>
+                </button>
+
+                {expandedTicketsId === p.id && (
+                  <div style={s.unitsPanel}>
+                    {ticketsLoading[p.id] ? (
+                      <div style={s.unitsSpinnerRow}>
+                        <span style={s.spinner} />
+                        <span>Loading tickets…</span>
+                      </div>
+                    ) : (ticketsMap[p.id]?.length || 0) === 0 ? (
+                      <div style={s.unitsEmpty}>
+                        <p style={s.unitsEmptyText}>No maintenance tickets logged</p>
+                        {canManage && (
+                          <button style={s.addUnitBtn} onClick={() => { setShowTicketForm(p.id); resetTicketForm(); setTicketFormErr(""); }}>+ Log Ticket</button>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div style={s.ticketList}>
+                          {ticketsMap[p.id].map(t => {
+                            const st = TICKET_STATUS_STYLES[t.status] || { bg: "#f1f5f9", color: "#475569", label: t.status };
+                            const pr = TICKET_PRIORITY_STYLES[t.priority] || TICKET_PRIORITY_STYLES.normal;
+                            return (
+                              <div key={t.id} style={s.ticketRow}>
+                                <div style={s.ticketMain}>
+                                  <span style={s.ticketTitle}>{t.title}</span>
+                                  {t.description && <span style={s.ticketDesc}>{t.description}</span>}
+                                </div>
+                                <span style={{ ...s.pill, background: pr.bg, color: pr.color }}>{t.priority}</span>
+                                <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
+                                {canManage && t.status !== "closed" && (
+                                  <button
+                                    style={s.closeTicketBtn}
+                                    disabled={closingTicketId === t.id}
+                                    onClick={() => handleCloseTicket(p.id, t.id)}
+                                  >
+                                    {closingTicketId === t.id ? "…" : "Close"}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {canManage && (
+                          <button style={s.addUnitBtnInline} onClick={() => { setShowTicketForm(p.id); resetTicketForm(); setTicketFormErr(""); }}>+ Log Ticket</button>
+                        )}
+                      </>
+                    )}
+
+                    {showTicketForm === p.id && (
+                      <div style={s.ticketFormBox}>
+                        <input
+                          style={s.input}
+                          placeholder="Ticket title"
+                          value={ticketForm.title}
+                          onChange={e => setTicketForm({ ...ticketForm, title: e.target.value })}
+                        />
+                        <textarea
+                          style={{ ...s.input, minHeight: 60 }}
+                          placeholder="Description (optional)"
+                          value={ticketForm.description}
+                          onChange={e => setTicketForm({ ...ticketForm, description: e.target.value })}
+                        />
+                        <select
+                          style={s.input}
+                          value={ticketForm.priority}
+                          onChange={e => setTicketForm({ ...ticketForm, priority: e.target.value })}
+                        >
+                          <option value="low">Low</option>
+                          <option value="normal">Normal</option>
+                          <option value="high">High</option>
+                          <option value="urgent">Urgent</option>
+                        </select>
+                        <select
+                          style={s.input}
+                          value={ticketForm.unit_id}
+                          onChange={e => setTicketForm({ ...ticketForm, unit_id: e.target.value })}
+                        >
+                          <option value="">No specific unit</option>
+                          {(unitsMap[p.id] || []).map(u => (
+                            <option key={u.id} value={u.id}>{u.unit_number}</option>
+                          ))}
+                        </select>
+                        {ticketFormErr && <p style={s.formErrText}>{ticketFormErr}</p>}
+                        <div style={s.ticketFormActions}>
+                          <button style={s.cancelBtn} onClick={() => { setShowTicketForm(null); resetTicketForm(); }}>Cancel</button>
+                          <button style={s.saveBtn} disabled={ticketSaving} onClick={() => handleCreateTicket(p.id)}>
+                            {ticketSaving ? "Saving…" : "Log Ticket"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Actions */}
               {canManage && (
                 <div style={s.cardActions}>
@@ -1230,6 +1443,20 @@ const s = {
   unitsEmptyText:  { fontSize: 12, color: "#94a3b8", margin: "0 0 10px" },
   addUnitBtn:      { background: "#ede9fe", color: "#6366f1", border: "none", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 },
   addUnitBtnInline:{ marginTop: 10, background: "none", border: "1px dashed #c7d2fe", color: "#6366f1", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, width: "100%" },
+
+  // Maintenance tickets (Day 10)
+  ticketCountBadge: { marginLeft: 8, background: "#ef4444", color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 20 },
+  ticketList:      { display: "flex", flexDirection: "column", gap: 8 },
+  ticketRow:       { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#f8fafc", borderRadius: 8 },
+  ticketMain:      { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 },
+  ticketTitle:     { fontSize: 13, fontWeight: 600, color: "#0f172a" },
+  ticketDesc:      { fontSize: 11, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  pill:            { fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20, textTransform: "capitalize", flexShrink: 0 },
+  closeTicketBtn:  { background: "#0f172a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 },
+  ticketFormBox:   { marginTop: 12, padding: 14, background: "#f8fafc", borderRadius: 8 },
+  ticketFormActions:{ display: "flex", justifyContent: "flex-end", gap: 8 },
+  formErrText:     { color: "#ef4444", fontSize: 12, margin: "0 0 10px" },
+  saveBtn:         { background: "#6366f1", color: "#fff", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   unitTable:       { display: "flex", flexDirection: "column", gap: 4 },
   unitRow:         { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 0.8fr 0.7fr 0.9fr 1fr 0.7fr", gap: 6, alignItems: "center", fontSize: 12, color: "#334155", padding: "6px 4px", borderBottom: "1px solid #f1f5f9" },
   unitHeaderRow:   { fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, borderBottom: "1px solid #e2e8f0" },
