@@ -54,6 +54,25 @@ def _make_slug(db: Session, name: str) -> str:
     raise HTTPException(500, "Could not generate a unique company slug")
 
 
+def _make_tenant_username(db: Session, email: str) -> str:
+    """Auto-generate a Tenant username from their email prefix, e.g.
+    'john@gmail.com' -> 'john_tenant'. If that's already taken (for example
+    another tenant 'john@hotmail.com' registered first), append an
+    incrementing number: 'john_tenant2', 'john_tenant3', etc."""
+    prefix = re.sub(r"[^A-Za-z0-9]", "", email.split("@")[0]).lower() or "tenant"
+    base = f"{prefix}_tenant"
+
+    if not db.query(User).filter(User.username == base).first():
+        return base
+
+    for n in range(2, 1000):
+        candidate = f"{base}{n}"
+        if not db.query(User).filter(User.username == candidate).first():
+            return candidate
+
+    raise HTTPException(500, "Could not generate a unique username")
+
+
 def serialize_user(user: User):
     return {
         "id": user.id,
@@ -472,6 +491,13 @@ def complete_registration(db: Session, token: str, data: dict):
 
     username = data.get("username", "").strip()
     password = data.get("password", "")
+
+    # Tenants don't pick a username — the registration screen skips that
+    # field for them entirely and auto-derives one from their email prefix
+    # (they can still set a display name via full_name). Everyone else must
+    # supply a username explicitly.
+    if not username and user.role == ROLE_TENANT:
+        username = _make_tenant_username(db, user.email)
 
     if not username or not password:
         raise HTTPException(400, "Username and password are required")

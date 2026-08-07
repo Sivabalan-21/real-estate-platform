@@ -1,13 +1,23 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
-const FIELDS = [
+const BASE_FIELDS = [
   { key: "username",    label: "Username",         type: "text",     placeholder: "Choose a username",   required: true  },
   { key: "full_name",   label: "Full Name",         type: "text",     placeholder: "Your full name",      required: true  },
   { key: "phone",       label: "Phone Number",      type: "tel",      placeholder: "+1 (555) 000-0000",   required: false },
   { key: "password",    label: "Password",          type: "password", placeholder: "Min 8 characters",    required: true  },
   { key: "confirm_pwd", label: "Confirm Password",  type: "password", placeholder: "Repeat your password",required: true  },
 ];
+
+// Tenants don't pick a username — it's auto-derived from their email prefix
+// server-side. They can still set a display name via "Full Name".
+const TENANT_FIELDS = BASE_FIELDS.filter(f => f.key !== "username").map(f =>
+  f.key === "full_name"
+    ? { ...f, label: "Display Name", placeholder: "What should we call you?" }
+    : f
+);
+
+const getFields = role => (role === "Tenant" ? TENANT_FIELDS : BASE_FIELDS);
 
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆"  },
@@ -94,6 +104,9 @@ function Register() {
       .finally(() => setLoading(false));
   }, [token]);
 
+  const isTenant = invite?.role === "Tenant";
+  const FIELDS   = getFields(invite?.role);
+
   const set = (key, val) => {
     setForm(f  => ({ ...f,  [key]: val }));
     setErrors(e => ({ ...e, [key]: ""  }));
@@ -175,7 +188,7 @@ function Register() {
       const data = await res.json();
 
       if (!res.ok) {
-        setErrors({ username: data.detail || "Registration failed" });
+        setErrors({ form: data.detail || "Registration failed" });
         return;
       }
 
@@ -198,7 +211,7 @@ function Register() {
       }, 3000);
 
     } catch {
-      setErrors({ username: "Server error. Please try again." });
+      setErrors({ form: "Server error. Please try again." });
     } finally {
       setSubmitting(false);
     }
@@ -236,9 +249,9 @@ function Register() {
       <div style={s.card}>
         <div style={s.successState}>
           <span style={s.successIcon}>✓</span>
-          <h3 style={s.successTitle}>Registration Complete!</h3>
+          <h3 style={s.successTitle}>{isTenant ? "You're all set!" : "Registration Complete!"}</h3>
           <p style={s.successDesc}>
-            Your account is ready.{" "}
+            {isTenant ? "Welcome home! " : "Your account is ready. "}
             {portalSlug
               ? <>Redirecting to your company portal in a moment…</>
               : <>Redirecting to login in a moment…</>
@@ -286,8 +299,12 @@ function Register() {
           <span style={s.brandName}>PropOS</span>
         </div>
 
-        <h2 style={s.title}>Complete Your Registration</h2>
-        <p style={s.sub}>You've been invited to join the platform. Fill in your details below.</p>
+        <h2 style={s.title}>{isTenant ? "Set up your tenant account" : "Complete Your Registration"}</h2>
+        <p style={s.sub}>
+          {isTenant
+            ? "Welcome to your new home! Just a couple details and you're in."
+            : "You've been invited to join the platform. Fill in your details below."}
+        </p>
 
         <div style={s.inviteInfo}>
           <div style={s.infoRow}>
@@ -378,6 +395,8 @@ function Register() {
           ))}
 
         </div>
+
+        {errors.form && <p style={s.errMsg}>{errors.form}</p>}
 
         <button style={s.submitBtn} onClick={handleSubmit} disabled={submitting}>
           {submitting ? "Creating Account…" : "Create My Account"}
