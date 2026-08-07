@@ -107,14 +107,18 @@ def test_tenant_gets_attached_to_existing_unassigned_lease(db_session, company_a
     assert still_unlinked["tenant_username"] is None
 
     # Complete registration using the invite token — this is what actually
-    # attaches the tenant to the lease.
+    # attaches the tenant to the lease. As of Day 12, a Tenant's username is
+    # auto-derived from their invite email (not submitted here), so the
+    # registration payload no longer includes one.
     complete_res = admin_client.post(f"/complete-registration/{invited.reset_token}", json={
-        "username": "tenant_lease", "password": "TestPass123!",
+        "password": "TestPass123!",
     })
     assert complete_res.status_code == 200
+    generated_username = complete_res.json()["username"]
+    assert generated_username == "tenant_lease_tenant"
 
     updated_lease = admin_client.get(f"/units/{unit['id']}/lease").json()
-    assert updated_lease["tenant_username"] == "tenant_lease"
+    assert updated_lease["tenant_username"] == generated_username
 
 
 def test_tenant_creation_blocked_if_unit_already_has_registered_tenant(db_session, company_a, admin_user, client_factory):

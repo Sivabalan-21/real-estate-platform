@@ -54,25 +54,6 @@ def _make_slug(db: Session, name: str) -> str:
     raise HTTPException(500, "Could not generate a unique company slug")
 
 
-def _make_tenant_username(db: Session, email: str) -> str:
-    """Auto-generate a Tenant username from their email prefix, e.g.
-    'john@gmail.com' -> 'john_tenant'. If that's already taken (for example
-    another tenant 'john@hotmail.com' registered first), append an
-    incrementing number: 'john_tenant2', 'john_tenant3', etc."""
-    prefix = re.sub(r"[^A-Za-z0-9]", "", email.split("@")[0]).lower() or "tenant"
-    base = f"{prefix}_tenant"
-
-    if not db.query(User).filter(User.username == base).first():
-        return base
-
-    for n in range(2, 1000):
-        candidate = f"{base}{n}"
-        if not db.query(User).filter(User.username == candidate).first():
-            return candidate
-
-    raise HTTPException(500, "Could not generate a unique username")
-
-
 def serialize_user(user: User):
     return {
         "id": user.id,
@@ -486,24 +467,43 @@ def get_invite_user(db: Session, token: str):
     return user
 
 
+def _generate_tenant_username(db: Session, email: str, exclude_id: str = None) -> str:
+    """Derive a username from the email's local part, e.g. john@gmail.com and
+    john@hotmail.com both start from "john_tenant" but get differentiated
+    with a numeric suffix (john_tenant, john_tenant2, ...) since usernames
+    are unique platform-wide, not per-company."""
+    base = (email.split("@")[0] or "tenant") + "_tenant"
+    candidate = base
+    suffix = 2
+    while True:
+        q = db.query(User).filter(User.username == candidate)
+        if exclude_id:
+            q = q.filter(User.id != exclude_id)
+        if not q.first():
+            return candidate
+        candidate = f"{base}{suffix}"
+        suffix += 1
+
+
 def complete_registration(db: Session, token: str, data: dict):
     user = get_invite_user(db, token)
 
-    username = data.get("username", "").strip()
     password = data.get("password", "")
+    if not password:
+        raise HTTPException(400, "Password is required")
 
-    # Tenants don't pick a username — the registration screen skips that
-    # field for them entirely and auto-derives one from their email prefix
-    # (they can still set a display name via full_name). Everyone else must
-    # supply a username explicitly.
-    if not username and user.role == ROLE_TENANT:
-        username = _make_tenant_username(db, user.email)
+    # Tenants don't pick a username — it's derived from their invite email so
+    # the registration screen can stay welcoming ("Set up your tenant
+    # account") instead of asking a new resident to invent a login handle.
+    if user.role == ROLE_TENANT:
+        username = _generate_tenant_username(db, user.email, exclude_id=user.id)
+    else:
+        username = data.get("username", "").strip()
+        if not username:
+            raise HTTPException(400, "Username and password are required")
 
-    if not username or not password:
-        raise HTTPException(400, "Username and password are required")
-
-    if db.query(User).filter(User.username == username, User.id != user.id).first():
-        raise HTTPException(400, "Username already taken")
+        if db.query(User).filter(User.username == username, User.id != user.id).first():
+            raise HTTPException(400, "Username already taken")
 
     if user.role == ROLE_COMPANY_ADMIN and not user.company_id:
         company_name = data.get("company_name", "").strip()

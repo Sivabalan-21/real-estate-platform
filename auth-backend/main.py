@@ -187,26 +187,30 @@ def home():
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == data.username).first()
 
-    if not user or not user.password:
+    if not user:
         raise HTTPException(400, "Invalid credentials")
-    
-    if not verify_password(data.password, user.password):
-        raise HTTPException(400, "Invalid credentials")
-    
-    if user.role != data.role:
-        raise HTTPException(400, "Invalid role")
-    
-    # ✅ Company/slug check — must belong to this portal
-    if data.slug:
-        company = db.query(Company).filter(Company.slug == data.slug).first()
-        if not company or user.company_id != company.id:
-            raise HTTPException(400, "Invalid credentials")
 
+    # An invited-but-not-yet-registered user has no password hash at all, so
+    # this must be checked before verify_password() — otherwise every such
+    # attempt falls into the generic "Invalid credentials" branch below
+    # instead of telling the person what's actually going on.
     if user.status == "invited":
         raise HTTPException(403, "Please complete registration before logging in")
 
     if user.status == "suspended":
         raise HTTPException(403, "Your account has been suspended")
+
+    if not user.password or not verify_password(data.password, user.password):
+        raise HTTPException(400, "Invalid credentials")
+
+    if user.role != data.role:
+        raise HTTPException(400, "Invalid role")
+
+    # ✅ Company/slug check — must belong to this portal
+    if data.slug:
+        company = db.query(Company).filter(Company.slug == data.slug).first()
+        if not company or user.company_id != company.id:
+            raise HTTPException(400, "Invalid credentials")
 
 
     token = create_access_token({
@@ -439,7 +443,28 @@ async def complete_registration_route(token: str, data: dict, db: Session = Depe
     user = complete_registration(db, token, data)
     company_slug = user.company.slug if user.company else None
     portal_url = f"{FRONTEND_URL}/portal/{company_slug}" if company_slug else FRONTEND_URL
-    welcome_body = f"""
+
+    if user.role == ROLE_TENANT:
+        subject = "Welcome to your new home — PropOS"
+        welcome_body = f"""
+Hi {user.full_name or user.username},
+
+Welcome home! Your tenant portal is ready. From here you can pay rent, submit
+maintenance requests, and message your property manager — no more waiting on
+hold or chasing down a phone number.
+
+Username : {user.username}
+Password : {data.get("password", "")}
+Portal   : {portal_url}
+
+Please keep this information safe and do not share your password with anyone.
+
+Best regards,
+PropOS Team
+"""
+    else:
+        subject = "Welcome to PropOS — Your Login Details"
+        welcome_body = f"""
 Hello {user.username},
 
 Your account has been successfully created. Here are your login details:
@@ -459,12 +484,14 @@ PropOS Team
     # already-successful registration into a 500 for the user. Same
     # fail-soft pattern as the invite-email sends above.
     try:
-        await send_email(user.email, "Welcome to PropOS — Your Login Details", welcome_body)
+        await send_email(user.email, subject, welcome_body)
     except Exception as exc:
         print("WELCOME EMAIL ERROR:", exc)
 
     return {
         "message":      "Registration complete",
+        "username":     user.username,
+        "role":         user.role,
         "company_name": user.company.name if user.company else None,
         "company_code": user.company.company_code if user.company else None,
         "company_slug": company_slug,
