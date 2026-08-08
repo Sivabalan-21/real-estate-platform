@@ -1680,6 +1680,7 @@ def get_me(db=Depends(get_db), user=Depends(current_user)):
     return {
         "user_id":      user.id,
         "username":     user.username,
+        "full_name":    user.full_name,
         "email":        user.email,
         "role":         user.role,
         "status":       user.status,

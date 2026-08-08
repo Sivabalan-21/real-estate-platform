@@ -1,5 +1,7 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
+
+const API = "http://187.127.180.107";
 
 // Where each role's own dashboard lives — used to bounce a mismatched role
 // away from the Tenant shell instead of rendering it for the wrong user.
@@ -18,6 +20,23 @@ function TenantLayout() {
   const location = useLocation();
   const username = localStorage.getItem("username");
   const role = localStorage.getItem("role");
+  const token = localStorage.getItem("token");
+
+  // The sidebar should greet a tenant by the display name they chose at
+  // registration, not the auto-generated login username — falls back to
+  // username until this loads (or if they never set one).
+  const [displayName, setDisplayName] = useState(username);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!cancelled && data?.full_name) setDisplayName(data.full_name);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [token]);
 
   // Guard: only a Tenant should ever see this shell.
   useEffect(() => {
@@ -70,10 +89,10 @@ function TenantLayout() {
         {/* USER INFO */}
         <div style={s.sidebarUser}>
           <div style={s.userAvatar}>
-            {(username || "T")[0].toUpperCase()}
+            {(displayName || "T")[0].toUpperCase()}
           </div>
           <div style={s.userInfo}>
-            <p style={s.userInfoName}>{username}</p>
+            <p style={s.userInfoName}>{displayName}</p>
             <p style={s.userInfoRole}>Tenant</p>
           </div>
         </div>
