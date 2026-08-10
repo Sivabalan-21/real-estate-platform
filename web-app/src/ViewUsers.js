@@ -13,14 +13,17 @@ const ROLE_META = {
 };
 
 const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Regional Manager"],
+  "Super Admin":      ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
+  "Company Admin":    ["Regional Manager"],
   "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
+  // A PM only ever creates the roles under them in the hierarchy — matches
+  // CreateUser.js's allowedRoles map and rbac.py's ROLE_HIERARCHY.
+  "Property Manager": ["Tenant", "Vendor", "Owner"],
 };
-const VISIBLE_ROLES_BY_CURRENT_ROLE = {
-  "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Regional Manager"],
-  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
-};
+// Same set drives both "which roles can I filter the user list by" and
+// "which roles can I invite" — a PM should only ever see/manage the roles
+// they're actually responsible for, not the full platform role list.
+const VISIBLE_ROLES_BY_CURRENT_ROLE = ROLE_OPTIONS_BY_CURRENT_ROLE;
 
 // ─── MODAL ───────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
@@ -87,7 +90,7 @@ function ViewUsers() {
   const [createEmail,       setCreateEmail]       = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [companies,         setCompanies]         = useState([]);
-  const [createRole,        setCreateRole]        = useState("Company Admin");
+  const [createRole,        setCreateRole]        = useState((ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [])[0] || "");
   const [creating,          setCreating]          = useState(false);
   const [createErr,         setCreateErr]         = useState("");
 
@@ -198,7 +201,7 @@ function ViewUsers() {
       setShowCreate(false);
       setCreateEmail("");
       setSelectedCompanyId("");
-      setCreateRole("Company Admin");
+      setCreateRole((ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [])[0] || "");
       fetchUsers();
     } catch {
       setCreateErr("Could not reach the server. Please check your connection.");
@@ -337,7 +340,24 @@ function ViewUsers() {
           <h2 style={s.pageTitle}>User Management</h2>
           <p style={s.pageSub}>{users.length} total users across all roles</p>
         </div>
-        <button style={s.primaryBtn} onClick={() => { setShowCreate(true); setCreateErr(""); setCreateEmail(""); setSelectedCompanyId(""); setCreateRole("Company Admin"); }}>
+        <button
+          style={s.primaryBtn}
+          onClick={() => {
+            // This modal has no unit picker, but Tenant creation requires
+            // one — CreateUser.js already handles that properly, so a PM
+            // (whose only realistic invite target is Tenant) goes there
+            // instead of hitting a 400 from a modal that can't ask for it.
+            if (currentRole === "Property Manager") {
+              navigate("/pm/users/create");
+              return;
+            }
+            setShowCreate(true);
+            setCreateErr("");
+            setCreateEmail("");
+            setSelectedCompanyId("");
+            setCreateRole((ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [])[0] || "");
+          }}
+        >
           + Invite User
         </button>
       </div>
@@ -453,7 +473,7 @@ function ViewUsers() {
 
             <label style={ms.label}>Assign Role <span style={ms.req}>*</span></label>
             <select style={ms.input} value={createRole} onChange={e => setCreateRole(e.target.value)}>
-              {SUPER_ADMIN_CREATE_ROLES.map(r => <option key={r}>{r}</option>)}
+              {(ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || []).map(r => <option key={r}>{r}</option>)}
             </select>
 
             {createRole !== "Company Admin" && (

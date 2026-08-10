@@ -34,6 +34,7 @@ function PMLayout() {
   const NAV = [
     { icon: "⊞", label: "Dashboard",  path: "/pm/dashboard" },
     { icon: "🏢", label: "Properties", path: "/pm/properties" },
+    { icon: "🏠", label: "Tenants",    path: "/pm/users/view" },
   ];
 
   if (role && role !== "Property Manager") return null; // redirect effect above is already firing
