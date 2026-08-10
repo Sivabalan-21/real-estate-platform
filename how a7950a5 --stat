@@ -1,0 +1,29 @@
+[33m4246fca[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Clean up duplicate imports in main.py
+[33ma7950a5[m Fix: resolve migration head conflict, add missing maintenance_tickets table, fix registration email crash
+[33m672fc2d[m Day 10 complete: maintenance_tickets table wired into /owner/portfolio open_ticket_count
+[33me37bca7[m Day 10: Owner portfolio dashboard
+[33mc0f3482[m Fix: include Owner users in Company Admin hierarchy view
+[33mcbb7da1[m Fix: validate tenant username before lease insert to avoid raw 500
+[33ma7dbbfa[m Day 8: unit photo attachments
+[33mf5b4795[m Fix duplicate /users/me route that silently dropped max_units/used_units
+[33ma463eaf[m Rename Admin role to Regional Manager to match LLD hierarchy
+[33m6d3f174[m Add PM unit quota allocation: backend endpoint + Edit User UI field
+[33mb98a6b3[m Enforce unit capacity on create_unit, fix total_units display, add Company Admin quota tests
+[33m0bcd8e5[m Day 3/5/6/7: unit tests, edit unit, lease CRUD API, lease UI
+[33md6e6479[m Day 3: Completed Unit CRUD with company isolation
+[33md814056[m Day 2: Lease migration and Unit API
+[33md0a13ae[m Company Admin sees only Admin-role users in hierarchy
+[33m49ee16a[m Fix Company Admin visibility filter: exclude own role, not restrict to it
+[33m5c638c6[m Company Admin sees all company users in hierarchy, not just Admins
+[33mcdcda00[m PM creates properties within unit quota, self-assigns; remove /assign endpoint; add quota fields to /users/me
+[33mdc0cbc1[m Property Manager creates properties within unit limit, self-assigns; Admin retains view/edit oversight
+[33ma172264[m Allow Admin to create properties and dimension types
+[33m1ba8878[m Allow Admin role to manage properties, not just Company Admin
+[33m48f3719[m Add Property Management page and PM Dashboard
+[33m4584226[m Add logo upload page, send-link flow in edit modal
+[33m4fa9331[m Fix token imports, logo upload endpoint, Company Admin hierarchy
+[33mf5f9e3c[m Send welcome email with credentials after registration
+[33m120de3a[m Send welcome email with credentials after registration
+[33m444a62a[m Fix API URL from localhost to production server
+[33m6049a71[m remove the unused parts
+[33mb1c048e[m Initial commit

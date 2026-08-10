@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
-const BASE_FIELDS = [
+const FIELDS = [
   { key: "username",    label: "Username",         type: "text",     placeholder: "Choose a username",   required: true  },
   { key: "full_name",   label: "Full Name",         type: "text",     placeholder: "Your full name",      required: true  },
   { key: "phone",       label: "Phone Number",      type: "tel",      placeholder: "+1 (555) 000-0000",   required: false },
@@ -9,15 +9,10 @@ const BASE_FIELDS = [
   { key: "confirm_pwd", label: "Confirm Password",  type: "password", placeholder: "Repeat your password",required: true  },
 ];
 
-// Tenants don't pick a username — it's auto-derived from their email prefix
-// server-side. They can still set a display name via "Full Name".
-const TENANT_FIELDS = BASE_FIELDS.filter(f => f.key !== "username").map(f =>
-  f.key === "full_name"
-    ? { ...f, label: "Display Name", placeholder: "What should we call you?" }
-    : f
-);
-
-const getFields = role => (role === "Tenant" ? TENANT_FIELDS : BASE_FIELDS);
+// Tenants don't pick a username — it's auto-derived from their email on the
+// backend, so the form skips straight to the fields that actually matter
+// for a new resident.
+const TENANT_FIELDS = FIELDS.filter(f => f.key !== "username");
 
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆"  },
@@ -93,6 +88,7 @@ function Register() {
   const [done,        setDone]        = useState(false);
   const [companyName, setCompanyName] = useState("");
   const [portalSlug,  setPortalSlug]  = useState("");
+  const [generatedUsername, setGeneratedUsername] = useState("");
   const [logo,        setLogo]        = useState(null);
   const [uploadStatus, setUploadStatus] = useState(""); // "uploading" | "done" | "failed" | ""
 
@@ -104,17 +100,17 @@ function Register() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  const isTenant = invite?.role === "Tenant";
-  const FIELDS   = getFields(invite?.role);
-
   const set = (key, val) => {
     setForm(f  => ({ ...f,  [key]: val }));
     setErrors(e => ({ ...e, [key]: ""  }));
   };
 
+  const isTenant = invite?.role === "Tenant";
+  const activeFields = isTenant ? TENANT_FIELDS : FIELDS;
+
   const validate = () => {
     const errs = {};
-    FIELDS.forEach(f => {
+    activeFields.forEach(f => {
       if (f.required && !form[f.key]?.trim()) errs[f.key] = `${f.label} is required`;
     });
     if (invite?.role === "Company Admin" && !companyName.trim()) errs.companyName = "Company name is required";
@@ -188,12 +184,13 @@ function Register() {
       const data = await res.json();
 
       if (!res.ok) {
-        setErrors({ form: data.detail || "Registration failed" });
+        setErrors({ username: data.detail || "Registration failed" });
         return;
       }
 
       const slug = data.company_slug || "";
       setPortalSlug(slug);
+      setGeneratedUsername(data.username || "");
 
       // If Company Admin and a logo was chosen, upload it now
       if (invite?.role === "Company Admin" && logo) {
@@ -201,6 +198,33 @@ function Register() {
       }
 
       setDone(true);
+
+      // A tenant's first login shouldn't feel like a second registration
+      // step — log them straight in with the credentials they just set and
+      // drop them on their portal instead of bouncing back to a login form.
+      if (invite?.role === "Tenant" && data.username) {
+        try {
+          const loginRes = await fetch("http://187.127.180.107/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: data.username, password: form.password, role: "Tenant" }),
+          });
+          if (loginRes.ok) {
+            const loginData = await loginRes.json();
+            const payload = JSON.parse(atob(loginData.access_token.split(".")[1]));
+            localStorage.setItem("token", loginData.access_token);
+            localStorage.setItem("role", payload.role);
+            localStorage.setItem("username", payload.sub);
+            localStorage.setItem("company_name", loginData.company_name || "");
+            localStorage.setItem("company_slug", loginData.company_slug || "");
+            localStorage.setItem("status", loginData.status || "active");
+            setTimeout(() => navigate("/tenant/dashboard"), 2000);
+            return;
+          }
+        } catch {
+          // fall through to the generic redirect below if auto-login fails
+        }
+      }
 
       setTimeout(() => {
         if (slug) {
@@ -211,7 +235,7 @@ function Register() {
       }, 3000);
 
     } catch {
-      setErrors({ form: "Server error. Please try again." });
+      setErrors({ username: "Server error. Please try again." });
     } finally {
       setSubmitting(false);
     }
@@ -249,12 +273,21 @@ function Register() {
       <div style={s.card}>
         <div style={s.successState}>
           <span style={s.successIcon}>✓</span>
-          <h3 style={s.successTitle}>{isTenant ? "You're all set!" : "Registration Complete!"}</h3>
+          <h3 style={s.successTitle}>
+            {invite?.role === "Tenant" ? "You're all set!" : "Registration Complete!"}
+          </h3>
           <p style={s.successDesc}>
-            {isTenant ? "Welcome home! " : "Your account is ready. "}
-            {portalSlug
-              ? <>Redirecting to your company portal in a moment…</>
-              : <>Redirecting to login in a moment…</>
+            {invite?.role === "Tenant"
+              ? "Taking you to your home portal…"
+              : (
+                <>
+                  Your account is ready.{" "}
+                  {portalSlug
+                    ? <>Redirecting to your company portal in a moment…</>
+                    : <>Redirecting to login in a moment…</>
+                  }
+                </>
+              )
             }
           </p>
 
@@ -271,7 +304,17 @@ function Register() {
             </div>
           )}
 
-          {portalSlug && (
+          {invite?.role === "Tenant" && generatedUsername && (
+            <div style={s.portalHint}>
+              <p style={s.portalLabel}>Your login username</p>
+              <code style={s.portalUrl}>{generatedUsername}</code>
+              <p style={s.portalNote}>
+                We've also emailed this to you along with the portal link, in case you need to log in again later.
+              </p>
+            </div>
+          )}
+
+          {portalSlug && invite?.role !== "Tenant" && (
             <div style={s.portalHint}>
               <p style={s.portalLabel}>Your company portal URL</p>
               <code style={s.portalUrl}>
@@ -299,10 +342,10 @@ function Register() {
           <span style={s.brandName}>PropOS</span>
         </div>
 
-        <h2 style={s.title}>{isTenant ? "Set up your tenant account" : "Complete Your Registration"}</h2>
+        <h2 style={s.title}>{isTenant ? "Welcome to your new home" : "Complete Your Registration"}</h2>
         <p style={s.sub}>
           {isTenant
-            ? "Welcome to your new home! Just a couple details and you're in."
+            ? "Set up your tenant account to pay rent, request maintenance, and stay in touch with your property manager."
             : "You've been invited to join the platform. Fill in your details below."}
         </p>
 
@@ -376,7 +419,7 @@ function Register() {
             </div>
           )}
 
-          {FIELDS.map(f => (
+          {activeFields.map(f => (
             <div key={f.key} style={f.key === "password" || f.key === "confirm_pwd" ? s.fieldFull : s.field}>
               <label style={s.label}>
                 {f.label}{f.required && <span style={s.req}> *</span>}
@@ -395,8 +438,6 @@ function Register() {
           ))}
 
         </div>
-
-        {errors.form && <p style={s.errMsg}>{errors.form}</p>}
 
         <button style={s.submitBtn} onClick={handleSubmit} disabled={submitting}>
           {submitting ? "Creating Account…" : "Create My Account"}

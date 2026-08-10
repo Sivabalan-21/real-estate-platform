@@ -17,7 +17,7 @@ function AdminDashboard() {
   const companyName = localStorage.getItem("company_name");
 
   const visibleCards = role === "Company Admin"
-  ? STAT_CARDS.filter(card => card.key === "Regional Manager" || card.key === "Owner")
+  ? STAT_CARDS.filter(card => card.key === "Regional Manager" || card.key === "Owner" || card.key === "Tenant")
   : STAT_CARDS.filter(card => card.key !== "Regional Manager");
 
   const [stats,   setStats]   = useState({ "Regional Manager": 0, "Property Manager": 0, Tenant: 0, Vendor: 0, Owner: 0 });

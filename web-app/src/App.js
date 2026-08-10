@@ -83,6 +83,7 @@ import React from "react";
           <Route path="/tenant"                  element={<TenantLayout />}>
             <Route path="dashboard"              element={<TenantDashboard />} />
             <Route path="maintenance"            element={<TenantMaintenance />} />
+            <Route path="maintenance/new"        element={<TenantMaintenance autoOpen />} />
             <Route path="payments"               element={<TenantPayments />} />
           </Route>
 

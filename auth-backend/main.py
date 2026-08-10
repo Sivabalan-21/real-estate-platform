@@ -1159,6 +1159,74 @@ def get_my_unit(
     return serialize_unit(lease.unit)
 
 
+@app.get("/tenant/me")
+def get_tenant_me(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Everything the Tenant dashboard needs in one call: unit, lease, and
+    the PM to contact for that property — pulled from PropertyAssignment
+    rather than hardcoded, so it stays correct if the PM changes."""
+    if user.role != ROLE_TENANT:
+        raise HTTPException(403, "Not authorized")
+
+    lease = (
+        db.query(Lease)
+        .filter(
+            Lease.tenant_username == user.username,
+            Lease.status == "active",
+        )
+        .first()
+    )
+
+    if not lease:
+        raise HTTPException(404, "No active unit assigned")
+
+    unit = lease.unit
+    property_ = lease.property
+
+    days_to_expiry = None
+    if lease.end_date:
+        days_to_expiry = (lease.end_date - datetime.utcnow().date()).days
+
+    assignment = (
+        db.query(PropertyAssignment)
+        .filter(PropertyAssignment.property_id == property_.id)
+        .first()
+    )
+    pm_user = assignment.pm_user if assignment else None
+
+    return {
+        "user": {
+            "username": user.username,
+            "full_name": user.full_name,
+            "email": user.email,
+            "phone": user.phone,
+        },
+        "unit": {
+            "unit_number": unit.unit_number,
+            "type": unit.type,
+            "address": property_.address,
+            "property_name": property_.name,
+            "beds": unit.beds,
+            "baths": unit.baths,
+            "sqft": unit.sqft,
+            "floor": unit.floor,
+        },
+        "lease": {
+            "start_date": lease.start_date,
+            "end_date": lease.end_date,
+            "monthly_rent": lease.monthly_rent,
+            "days_to_expiry": days_to_expiry,
+            "status": lease.status,
+        },
+        "property_manager": {
+            "pm_name": (pm_user.full_name or pm_user.username) if pm_user else None,
+            "pm_email": pm_user.email if pm_user else None,
+        } if pm_user else None,
+    }
+
+
 def serialize_lease(lease: Lease):
     tenant = lease.tenant
     return {

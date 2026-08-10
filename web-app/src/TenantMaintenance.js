@@ -8,7 +8,7 @@ const STATUS_STYLES = {
   closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
 };
 
-function TenantMaintenance() {
+function TenantMaintenance({ autoOpen = false }) {
   const token = localStorage.getItem("token");
 
   const [unit, setUnit] = useState(null);
@@ -57,6 +57,12 @@ function TenantMaintenance() {
   }, [token]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // /tenant/maintenance/new deep-links straight into the "Report a Problem"
+  // form instead of landing on the list first.
+  useEffect(() => {
+    if (autoOpen && unit && !unitError) setShowForm(true);
+  }, [autoOpen, unit, unitError]);
 
   const handleSubmit = async () => {
     if (!form.title.trim()) { setFormErr("Title is required"); return; }
