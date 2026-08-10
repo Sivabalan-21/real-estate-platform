@@ -292,6 +292,15 @@ def get_my_users(
             User.created_by == user.username
         ).all()
 
+    elif user.role == ROLE_PROPERTY_MANAGER:
+        # PMs weren't handled here at all before — fell through to the
+        # catch-all `else: users = []` below, so a PM's own "Tenants" page
+        # always showed "No users found" regardless of who they'd actually
+        # created. Same created_by scoping as Regional Manager above.
+        users = db.query(User).filter(
+            User.created_by == user.username
+        ).all()
+
     else:
         users = []
 
