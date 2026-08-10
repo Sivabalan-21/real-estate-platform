@@ -293,13 +293,42 @@ def get_my_users(
         ).all()
 
     elif user.role == ROLE_PROPERTY_MANAGER:
-        # PMs weren't handled here at all before — fell through to the
-        # catch-all `else: users = []` below, so a PM's own "Tenants" page
-        # always showed "No users found" regardless of who they'd actually
-        # created. Same created_by scoping as Regional Manager above.
-        users = db.query(User).filter(
-            User.created_by == user.username
-        ).all()
+        # Two sources, unioned: (1) anyone this PM personally created
+        # (vendors, owners, tenants they invited themselves), and (2) any
+        # tenant living on a property assigned to this PM via
+        # PropertyAssignment, regardless of who actually sent the invite —
+        # a Company Admin creating a tenant directly (e.g. before a PM was
+        # assigned, or for VIP onboarding) shouldn't make that tenant
+        # invisible to the PM who's actually responsible for the property.
+        created_users = db.query(User).filter(User.created_by == user.username).all()
+
+        assigned_property_ids = [
+            row[0] for row in
+            db.query(PropertyAssignment.property_id)
+            .filter(PropertyAssignment.pm_username == user.username)
+            .all()
+        ]
+
+        property_tenants = []
+        if assigned_property_ids:
+            tenant_usernames = [
+                row[0] for row in
+                db.query(Lease.tenant_username)
+                .filter(
+                    Lease.property_id.in_(assigned_property_ids),
+                    Lease.tenant_username.isnot(None),
+                )
+                .all()
+            ]
+            if tenant_usernames:
+                property_tenants = db.query(User).filter(User.username.in_(tenant_usernames)).all()
+
+        # Dedupe by id — a tenant the PM both invited AND manages the
+        # property for would otherwise appear via both sources.
+        combined = {u.id: u for u in created_users}
+        for u in property_tenants:
+            combined[u.id] = u
+        users = list(combined.values())
 
     else:
         users = []
