@@ -1,13 +1,21 @@
 from datetime import datetime
+import random
+import re
+import string
 
 import bcrypt
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from models import Company, User
+from models import Company, Lease, Property, Unit, User
 from rbac import (
+    ID_TYPES,
     ROLE_COMPANY_ADMIN,
+    ROLE_PROPERTY_MANAGER,
     ROLE_SUPER_ADMIN,
+    ROLE_TENANT,
+    TENANT_STATUS_TRANSITIONS,
+    TENANT_STATUSES,
     USER_STATUSES,
     can_assign_role,
     can_create,
@@ -15,6 +23,35 @@ from rbac import (
     is_valid_role,
 )
 from tokens import create_invite_token, create_reset_token, is_token_expired
+
+
+# ── Company code + slug helpers ───────────────────────────────────────────────
+
+def _make_company_code(db: Session, name: str) -> str:
+    """Generate a unique code like PROP-4821.
+    Uses the first 4 alphabetic characters of the name (uppercased).
+    Retries up to 10 times to guarantee uniqueness."""
+    prefix = re.sub(r"[^A-Za-z]", "", name)[:4].upper() or "COMP"
+    for _ in range(10):
+        digits = "".join(random.choices(string.digits, k=4))
+        code = f"{prefix}-{digits}"
+        if not db.query(Company).filter(Company.company_code == code).first():
+            return code
+    raise HTTPException(500, "Could not generate a unique company code")
+
+
+def _make_slug(db: Session, name: str) -> str:
+    """Convert company name to a URL-safe slug, e.g. 'PropTech Solutions' -> 'proptech-solutions'.
+    Appends a short random suffix if the slug is already taken."""
+    base = name.strip().lower()
+    if not db.query(Company).filter(Company.slug == base).first():
+        return base
+    for _ in range(10):
+        suffix = "".join(random.choices(string.digits, k=4))
+        slug = f"{base}-{suffix}"
+        if not db.query(Company).filter(Company.slug == slug).first():
+            return slug
+    raise HTTPException(500, "Could not generate a unique company slug")
 
 
 def serialize_user(user: User):
@@ -26,11 +63,18 @@ def serialize_user(user: User):
         "role": user.role,
         "company_id": user.company_id,
         "company_name": user.company.name if user.company else None,
+        "company_code": user.company.company_code if user.company else None,
+        "company_slug": user.company.slug if user.company else None,
         "status": user.status,
         "created_by": user.created_by,
         "updated_by": user.updated_by,
         "max_units": user.max_units,
         "used_units": user.used_units,
+        "unit_id": user.unit_id,
+        "tenant_status": user.tenant_status,
+        "id_type": user.id_type,
+        "id_number": user.id_number,
+        "move_in_date": str(user.move_in_date) if user.move_in_date else None,
         "created_at": str(user.created_at) if user.created_at else None,
         "updated_at": str(user.updated_at) if user.updated_at else None,
     }
@@ -55,13 +99,52 @@ def get_or_create_company(db: Session, name: str):
     if company:
         return company
 
-    company = Company(name=company_name)
+    slug = (
+    company_name
+    .strip()
+    .lower()
+    .replace(" ", "-")
+)
+    company_code=_make_company_code(db, company_name)
+
+    company = Company(
+    name=company_name,
+    slug=slug,
+    company_code=company_code
+)
     db.add(company)
-    # Use flush + explicit refresh to guarantee company.id is populated
-    # before we assign it to the user within the same transaction.
+    # flush + refresh guarantees company.id (and code/slug) are populated
+    # before we assign company_id to the user in the same transaction.
     db.flush()
     db.refresh(company)
     return company
+
+
+def backfill_companies(db: Session):
+    companies = db.query(Company).all()
+
+    fixed = 0
+    for company in companies:
+        needs_code = not company.company_code  # catches None AND empty string
+        needs_slug = (
+            not company.slug or
+            " " in company.slug or
+            company.slug != company.slug.lower()
+        )
+
+        if needs_code:
+            company.company_code = _make_company_code(db, company.name)
+        if needs_slug:
+            clean = re.sub(r"[^a-z0-9]+", "-", company.name.strip().lower()).strip("-")
+            company.slug = clean
+            fixed += 1
+
+        if needs_code:  # count separately
+            fixed += 1
+
+    if fixed:
+        db.commit()
+        print(f"[startup] Backfilled slug/code for {fixed} company(s)")
 
 
 def get_company_for_new_user(db: Session, current_user: User, data):
@@ -69,13 +152,18 @@ def get_company_for_new_user(db: Session, current_user: User, data):
         if data.role == ROLE_COMPANY_ADMIN:
             return None
 
+        company = None
+
         if data.company_id:
             company = db.query(Company).filter(
                 Company.id == data.company_id
             ).first()
 
             if not company:
-                raise HTTPException(404, "Company not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Company not found"
+                )
 
             return company
 
@@ -131,6 +219,35 @@ def create_user(db: Session, current_user: User, data):
 
 
     company = get_company_for_new_user(db, current_user, data)
+
+    unit = None
+    if data.role == ROLE_TENANT:
+        if not data.unit_id:
+            raise HTTPException(400, "unit_id required for Tenant role")
+
+        unit = (
+            db.query(Unit)
+            .join(Property)
+            .filter(Unit.id == data.unit_id, Property.company_id == company.id if company else False)
+            .first()
+        )
+        if not unit:
+            raise HTTPException(400, "Invalid unit")
+
+        # A unit can only have one active lease (unique=True on Lease.unit_id).
+        # If that lease already has a tenant on it, this invite would collide
+        # with an existing occupant.
+        existing_lease = (
+            db.query(Lease)
+            .filter(Lease.unit_id == data.unit_id, Lease.status == "active")
+            .first()
+        )
+        if existing_lease and existing_lease.tenant_username:
+            raise HTTPException(400, "Unit already has a tenant assigned")
+
+        if data.id_type and data.id_type not in ID_TYPES:
+            raise HTTPException(400, f"Invalid id_type. Must be one of {ID_TYPES}")
+
     token, expiry = create_invite_token()
 
     user = User(
@@ -147,6 +264,13 @@ def create_user(db: Session, current_user: User, data):
         updated_by=current_user.username,
         max_units=data.units,
         used_units=0,
+        unit_id=unit.id if unit else None,
+        # Tenant Service LLD: profile starts in ONBOARDING until documents
+        # are uploaded and verified (that transition happens separately).
+        tenant_status="ONBOARDING" if data.role == ROLE_TENANT else None,
+        id_type=data.id_type if data.role == ROLE_TENANT else None,
+        id_number=data.id_number if data.role == ROLE_TENANT else None,
+        move_in_date=(data.move_in_date if data.role == ROLE_TENANT else None),
     )
 
     db.add(user)
@@ -204,6 +328,59 @@ def update_user(db: Session, current_user: User, target_username: str, data):
         target.token_type = "reset"
         target.token_expiry = expiry
 
+    if data.units is not None:
+        target_role = data.role if data.role is not None else target.role
+        if target_role != ROLE_PROPERTY_MANAGER:
+            raise HTTPException(400, "Unit quota can only be set for Property Manager accounts")
+        if data.units < (target.used_units or 0):
+            raise HTTPException(
+                400,
+                f"Cannot set quota below {target.used_units or 0}, the number of units "
+                "already in use by this Property Manager.",
+            )
+        target.max_units = data.units
+
+    # --- Tenant Service LLD: ONBOARDING -> ACTIVE -> MOVED_OUT ------------
+    if data.tenant_status is not None:
+        if target.role != ROLE_TENANT:
+            raise HTTPException(400, "tenant_status only applies to Tenant accounts")
+        if data.tenant_status not in TENANT_STATUSES:
+            raise HTTPException(400, f"Invalid tenant_status. Must be one of {TENANT_STATUSES}")
+
+        current_status = target.tenant_status or "ONBOARDING"
+        if data.tenant_status != current_status:
+            if data.tenant_status not in TENANT_STATUS_TRANSITIONS.get(current_status, set()):
+                raise HTTPException(
+                    400, f"Cannot move tenant_status from {current_status} to {data.tenant_status}"
+                )
+            target.tenant_status = data.tenant_status
+
+            if data.tenant_status == "MOVED_OUT":
+                # LLD Step 4 — Move Out: revoke login (Auth Service), free the
+                # unit and end the lease (Property Service). Finance/Kafka
+                # notification hooks are separate follow-ups.
+                target.status = "suspended"
+                if target.unit_id:
+                    lease = (
+                        db.query(Lease)
+                        .filter(Lease.unit_id == target.unit_id, Lease.status == "active")
+                        .first()
+                    )
+                    if lease:
+                        lease.status = "terminated"
+                        lease.unit.status = "vacant"
+
+    if data.id_type is not None:
+        if data.id_type not in ID_TYPES:
+            raise HTTPException(400, f"Invalid id_type. Must be one of {ID_TYPES}")
+        target.id_type = data.id_type
+
+    if data.id_number is not None:
+        target.id_number = data.id_number
+
+    if data.move_in_date is not None:
+        target.move_in_date = data.move_in_date
+
     target.updated_by = current_user.username
     target.updated_at = datetime.utcnow()
 
@@ -225,24 +402,34 @@ def delete_user(db: Session, current_user: User, user_id: str):
 
     # Prevent deleting a registered Company Admin while company still has users
     if (
-        target.role == ROLE_COMPANY_ADMIN
-        and target.status != "invited"
-    ):
+    target.role == ROLE_COMPANY_ADMIN
+    and target.status != "invited"
+    and target.company_id
+):
+
         child_users = db.query(User).filter(
-            User.company_id == target.company_id,
-            User.id != target.id,
-            User.role != ROLE_COMPANY_ADMIN,
-            User.status == "active"
-).count()
+        User.company_id == target.company_id,
+        User.id != target.id,
+        User.role != ROLE_COMPANY_ADMIN,
+        User.status == "active"
+    ).count()
 
         if child_users > 0:
             raise HTTPException(
-                status_code=400,
-                detail="Cannot delete Company Admin while company users exist"
-            )
+            status_code=400,
+            detail="Cannot delete Company Admin while company users exist"
+        )
 
+        company = db.query(Company).filter(
+        Company.id == target.company_id
+    ).first()
+
+        if company:
+            db.delete(company)
     db.delete(target)
     db.commit()
+
+    return {"message": "User deleted successfully"}
 
 
 def resend_invite(db: Session, current_user: User, user_id: str):
@@ -283,10 +470,14 @@ def get_invite_user(db: Session, token: str):
 def complete_registration(db: Session, token: str, data: dict):
     user = get_invite_user(db, token)
 
-    username = data.get("username", "").strip()
     password = data.get("password", "")
+    if not password:
+        raise HTTPException(400, "Password is required")
 
-    if not username or not password:
+    # Tenants pick their own username too, same as every other role — a
+    # username field is always shown on the registration form.
+    username = data.get("username", "").strip()
+    if not username:
         raise HTTPException(400, "Username and password are required")
 
     if db.query(User).filter(User.username == username, User.id != user.id).first():
@@ -305,11 +496,26 @@ def complete_registration(db: Session, token: str, data: dict):
 
     user.username = username
     user.password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    user.full_name = data.get("full_name", "").strip() or None   # ← add
+    user.phone     = data.get("phone",     "").strip() or None   # ← add
     user.status = "active"
     user.reset_token = None
     user.token_type = None
     user.token_expiry = None
     user.updated_at = datetime.utcnow()
+
+    # Tenant's username didn't exist yet when create_user() ran, so if the PM
+    # already created a lease on the linked unit before the tenant registered,
+    # attach it now that we finally have a username to key on.
+    if user.role == ROLE_TENANT and user.unit_id:
+        lease = (
+            db.query(Lease)
+            .filter(Lease.unit_id == user.unit_id, Lease.status == "active")
+            .first()
+        )
+        if lease and not lease.tenant_username:
+            lease.tenant_username = user.username
+    
 
     # Commit persists both the new Company row and the updated user.company_id
     # in a single transaction — either both succeed or both roll back.
