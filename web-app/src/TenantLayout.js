@@ -15,12 +15,30 @@ const ROLE_HOME = {
   "Vendor": "/vendor/dashboard",
 };
 
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < breakpoint : false
+  );
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function TenantLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const username = localStorage.getItem("username");
   const role = localStorage.getItem("role");
   const token = localStorage.getItem("token");
+  const isMobile = useIsMobile();
+
+  // The always-visible 230px sidebar ate over half of a 375px screen and
+  // clipped/overflowed the rest — this collapses it into a top bar with a
+  // slide-in drawer below the mobile breakpoint instead.
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // The sidebar should greet a tenant by the display name they chose at
   // registration, not their login username — falls back to username until
@@ -91,56 +109,83 @@ function TenantLayout() {
 
   if (role && role !== "Tenant") return null; // redirect effect above is already firing
 
+  const sidebarContent = (
+    <>
+      <div style={s.brand}>
+        <span style={s.brandIcon}>⬡</span>
+        <span style={s.brandText}>PropOS</span>
+      </div>
+
+      <nav style={s.nav}>
+        {NAV.map(n => {
+          const active = location.pathname === n.path;
+          return (
+            <div
+              key={n.path}
+              style={{ ...s.navItem, ...(active ? s.navActive : {}) }}
+              onClick={() => { navigate(n.path); setDrawerOpen(false); }}
+            >
+              <span style={s.navIcon}>{n.icon}</span>
+              <span>{n.label}</span>
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* USER INFO */}
+      <div
+        style={s.sidebarUser}
+        onClick={() => { setEditForm({ full_name: displayName || "", phone }); setEditError(""); setEditOpen(true); }}
+        title="Edit profile"
+      >
+        <div style={s.userAvatar}>
+          {(displayName || "T")[0].toUpperCase()}
+        </div>
+        <div style={s.userInfo}>
+          <p style={s.userInfoName}>{displayName}</p>
+          <p style={s.userInfoRole}>Tenant</p>
+        </div>
+        <span style={s.editPencil}>✎</span>
+      </div>
+
+      <button style={s.logoutBtn} onClick={logout}>
+        <span>⎋</span> Sign Out
+      </button>
+    </>
+  );
+
   return (
-    <div style={s.shell}>
+    <div style={isMobile ? s.shellMobile : s.shell}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-      {/* SIDEBAR */}
-      <aside style={s.sidebar}>
-        <div style={s.brand}>
-          <span style={s.brandIcon}>⬡</span>
-          <span style={s.brandText}>PropOS</span>
-        </div>
-
-        <nav style={s.nav}>
-          {NAV.map(n => {
-            const active = location.pathname === n.path;
-            return (
-              <div
-                key={n.path}
-                style={{ ...s.navItem, ...(active ? s.navActive : {}) }}
-                onClick={() => navigate(n.path)}
-              >
-                <span style={s.navIcon}>{n.icon}</span>
-                <span>{n.label}</span>
-              </div>
-            );
-          })}
-        </nav>
-
-        {/* USER INFO */}
-        <div
-          style={s.sidebarUser}
-          onClick={() => { setEditForm({ full_name: displayName || "", phone }); setEditError(""); setEditOpen(true); }}
-          title="Edit profile"
-        >
-          <div style={s.userAvatar}>
-            {(displayName || "T")[0].toUpperCase()}
+      {isMobile ? (
+        <>
+          {/* MOBILE TOP BAR */}
+          <div style={s.topBar}>
+            <button style={s.hamburgerBtn} onClick={() => setDrawerOpen(true)} aria-label="Open menu">☰</button>
+            <div style={s.topBarBrand}>
+              <span style={s.brandIcon}>⬡</span>
+              <span style={s.brandText}>PropOS</span>
+            </div>
+            <div style={{ width: 32 }} /> {/* balances the hamburger for centered brand */}
           </div>
-          <div style={s.userInfo}>
-            <p style={s.userInfoName}>{displayName}</p>
-            <p style={s.userInfoRole}>Tenant</p>
-          </div>
-          <span style={s.editPencil}>✎</span>
-        </div>
 
-        <button style={s.logoutBtn} onClick={logout}>
-          <span>⎋</span> Sign Out
-        </button>
-      </aside>
+          {/* SLIDE-IN DRAWER */}
+          {drawerOpen && (
+            <div style={s.drawerOverlay} onClick={() => setDrawerOpen(false)}>
+              <aside style={s.drawerPanel} onClick={e => e.stopPropagation()}>
+                {sidebarContent}
+              </aside>
+            </div>
+          )}
+        </>
+      ) : (
+        /* DESKTOP SIDEBAR */
+        <aside style={s.sidebar}>{sidebarContent}</aside>
+      )}
 
       {/* MAIN */}
-      <main style={s.main}>
+      <main style={isMobile ? s.mainMobile : s.main}>
         <Outlet />
       </main>
 
@@ -185,7 +230,16 @@ function TenantLayout() {
 
 const s = {
   shell:        { display: "flex", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: "#f8fafc" },
+  shellMobile:  { display: "flex", flexDirection: "column", minHeight: "100vh", width: "100%", fontFamily: "'DM Sans', sans-serif", background: "#f8fafc", overflowX: "hidden", boxSizing: "border-box" },
   sidebar:      { width: 230, background: "#0f172a", display: "flex", flexDirection: "column", padding: "24px 16px" },
+
+  topBar:       { display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0f172a", padding: "12px 16px", boxSizing: "border-box", width: "100%" },
+  hamburgerBtn: { background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", width: 32, padding: 0 },
+  topBarBrand:  { display: "flex", alignItems: "center", gap: 8 },
+
+  drawerOverlay:{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 60, display: "flex" },
+  drawerPanel:  { width: 240, maxWidth: "80vw", height: "100%", background: "#0f172a", display: "flex", flexDirection: "column", padding: "24px 16px", boxSizing: "border-box" },
+
   brand:        { display: "flex", alignItems: "center", gap: 10, marginBottom: 36, paddingLeft: 8 },
   brandIcon:    { fontSize: 22, color: "#6366f1" },
   brandText:    { color: "#fff", fontSize: 18, fontWeight: 700, letterSpacing: 1 },
@@ -201,9 +255,10 @@ const s = {
   editPencil:   { fontSize: 12, color: "#64748b", flexShrink: 0 },
   logoutBtn:    { background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "9px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 8 },
   main:         { flex: 1, overflow: "auto" },
+  mainMobile:   { flex: 1, width: "100%", boxSizing: "border-box", overflowX: "hidden" },
 
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 },
-  modalCard:    { background: "#fff", borderRadius: 14, padding: 28, width: 360, maxWidth: "90vw", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" },
+  modalCard:    { background: "#fff", borderRadius: 14, padding: 28, width: 360, maxWidth: "90vw", boxShadow: "0 20px 40px rgba(0,0,0,0.2)", boxSizing: "border-box" },
   modalTitle:   { margin: "0 0 18px", fontSize: 18, fontWeight: 700, color: "#0f172a" },
   modalLabel:   { display: "block", fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6, marginTop: 14 },
   modalInput:   { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 14, fontFamily: "inherit" },
