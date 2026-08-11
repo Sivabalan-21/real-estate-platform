@@ -9,10 +9,13 @@ const FIELDS = [
   { key: "confirm_pwd", label: "Confirm Password",  type: "password", placeholder: "Repeat your password",required: true  },
 ];
 
-// Tenants don't pick a username — it's auto-derived from their email on the
-// backend, so the form skips straight to the fields that actually matter
-// for a new resident.
-const TENANT_FIELDS = FIELDS.filter(f => f.key !== "username");
+// Tenants pick their own username too, same as every other role — the
+// field is just relabeled so it reads naturally on a resident-facing form.
+const TENANT_FIELDS = FIELDS.map(f =>
+  f.key === "full_name"
+    ? { ...f, label: "Display Name", placeholder: "What should we call you?" }
+    : f
+);
 
 const ROLE_META = {
   "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆"  },

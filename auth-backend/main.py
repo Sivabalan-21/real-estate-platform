@@ -1797,3 +1797,28 @@ def get_me(db=Depends(get_db), user=Depends(current_user)):
         "max_units":    user.max_units,
         "used_units":   user.used_units,
     }
+
+
+@app.patch("/users/me", response_model=None)
+def update_me(data: dict, db=Depends(get_db), user=Depends(current_user)):
+    """Self-service profile edit — any logged-in user can update their own
+    display name / phone. Deliberately narrow: username, email, and role
+    stay admin-only (via /users/update/{username}), so this endpoint can't
+    be used to escalate or impersonate."""
+    if "full_name" in data:
+        user.full_name = (data.get("full_name") or "").strip() or None
+    if "phone" in data:
+        user.phone = (data.get("phone") or "").strip() or None
+
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "user_id":   user.id,
+        "username":  user.username,
+        "full_name": user.full_name,
+        "phone":     user.phone,
+        "email":     user.email,
+        "role":      user.role,
+    }
