@@ -289,7 +289,8 @@ def get_my_users(
 
     elif user.role == ROLE_ADMIN:
         users = db.query(User).filter(
-            User.created_by == user.username
+            User.created_by == user.username,
+            User.id != user.id,
         ).all()
 
     elif user.role == ROLE_PROPERTY_MANAGER:
@@ -323,11 +324,14 @@ def get_my_users(
             if tenant_usernames:
                 property_tenants = db.query(User).filter(User.username.in_(tenant_usernames)).all()
 
-        # Dedupe by id — a tenant the PM both invited AND manages the
-        # property for would otherwise appear via both sources.
+        # Dedupe by id, and defensively drop the PM's own record — a PM
+        # should never see themselves in their own "people I manage" list,
+        # even if stale/seeded data somehow set created_by to their own
+        # username.
         combined = {u.id: u for u in created_users}
         for u in property_tenants:
             combined[u.id] = u
+        combined.pop(user.id, None)
         users = list(combined.values())
 
     else:
@@ -1801,24 +1805,22 @@ def get_me(db=Depends(get_db), user=Depends(current_user)):
 
 @app.patch("/users/me", response_model=None)
 def update_me(data: dict, db=Depends(get_db), user=Depends(current_user)):
-    """Self-service profile edit — any logged-in user can update their own
-    display name / phone. Deliberately narrow: username, email, and role
-    stay admin-only (via /users/update/{username}), so this endpoint can't
-    be used to escalate or impersonate."""
+    """Lets any logged-in user (Tenant included) fix their own display name
+    or phone number after registration, without going through User
+    Management. Deliberately narrow — username, email, and role changes
+    stay admin-only, this is just the self-service subset."""
     if "full_name" in data:
-        user.full_name = (data.get("full_name") or "").strip() or None
+        full_name = (data.get("full_name") or "").strip()
+        user.full_name = full_name or None
     if "phone" in data:
-        user.phone = (data.get("phone") or "").strip() or None
-
+        phone = (data.get("phone") or "").strip()
+        user.phone = phone or None
     user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
-
     return {
         "user_id":   user.id,
         "username":  user.username,
         "full_name": user.full_name,
         "phone":     user.phone,
-        "email":     user.email,
-        "role":      user.role,
     }

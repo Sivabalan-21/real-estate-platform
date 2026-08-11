@@ -147,3 +147,16 @@ def test_pm_sees_tenant_via_both_sources_without_duplicates(
     res = client_factory(pm_user).get("/users/my-hierarchy")
     matches = [u for u in res.json() if u["username"] == "double_source_tenant"]
     assert len(matches) == 1
+
+
+def test_pm_never_sees_themselves_in_their_own_list(db_session, company_a, pm_user, client_factory):
+    """Defensive check: even if stale/seeded data set created_by to the
+    PM's own username (as happened with a live test account), the PM
+    should never appear in their own hierarchy list."""
+    pm_user.created_by = pm_user.username
+    db_session.commit()
+
+    res = client_factory(pm_user).get("/users/my-hierarchy")
+    assert res.status_code == 200
+    usernames = {u["username"] for u in res.json()}
+    assert pm_user.username not in usernames
