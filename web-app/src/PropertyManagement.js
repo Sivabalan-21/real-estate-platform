@@ -221,8 +221,11 @@ export default function PropertyManagement() {
     return { bg: "#d1fae5", color: "#065f46" };
   };
 
-  const resetLeaseForm = () => {
-    setLeaseForm({ tenant_username: "", start_date: "", end_date: "", monthly_rent: "", escalation_pct: "", renewal_flag: false });
+  const resetLeaseForm = (defaultRent = "") => {
+    // Pre-fill from the unit's listed rent so the PM isn't retyping the
+    // same number they already set when the unit was created — they can
+    // still override it if the actual lease was negotiated differently.
+    setLeaseForm({ tenant_username: "", start_date: "", end_date: "", monthly_rent: defaultRent ? String(defaultRent) : "", escalation_pct: "", renewal_flag: false });
     setLeaseFormErr("");
   };
 
@@ -819,7 +822,7 @@ export default function PropertyManagement() {
                                         {canManage && (
                                           <button
                                             style={s.createLeaseBtn}
-                                            onClick={() => { setLeaseModalUnit({ property: p, unit: u }); resetLeaseForm(); }}
+                                            onClick={() => { setLeaseModalUnit({ property: p, unit: u }); resetLeaseForm(u.rent_amount); }}
                                           >
                                             Create Lease
                                           </button>
