@@ -159,3 +159,20 @@ class MaintenanceTicketUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
+    # Day 14 additions — optional so the Day 10 PUT flow is unaffected.
+    category: Optional[str] = None
+    assigned_pm: Optional[str] = None
+    assigned_vendor_id: Optional[str] = None
+    rating: Optional[int] = None
+    note: Optional[str] = None  # optional TicketHistory note on a status change
+
+
+class TicketCreate(BaseModel):
+    """Day 14 richer create, used by POST /tickets. property_id lives in the
+    body here rather than the URL path since this route isn't nested under
+    /properties/{id} the way the Day 10 one is."""
+    property_id: str
+    unit_id: Optional[str] = None
+    category: str
+    description: Optional[str] = None
+    priority: Optional[str] = "normal"

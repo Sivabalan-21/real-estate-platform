@@ -14,7 +14,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
@@ -32,6 +32,7 @@ from schemas import (
     LeaseUpdate,
     MaintenanceTicketCreate,
     MaintenanceTicketUpdate,
+    TicketCreate,
 )
 from services.user_service import (
     backfill_companies,
@@ -1510,13 +1511,19 @@ def get_owner_portfolio(
 def serialize_ticket(ticket: MaintenanceTicket):
     return {
         "id": ticket.id,
+        "company_id": ticket.company_id,
         "property_id": ticket.property_id,
         "unit_id": ticket.unit_id,
         "title": ticket.title,
         "description": ticket.description,
+        "category": ticket.category,
         "status": ticket.status,
         "priority": ticket.priority,
         "created_by": ticket.created_by,
+        "raised_by": ticket.created_by,
+        "assigned_pm": ticket.assigned_pm,
+        "assigned_vendor_id": ticket.assigned_vendor_id,
+        "rating": ticket.rating,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
         "closed_at": ticket.closed_at,
@@ -1525,6 +1532,19 @@ def serialize_ticket(ticket: MaintenanceTicket):
 
 TICKET_STATUSES = ("open", "in_progress", "closed")
 TICKET_PRIORITIES = ("low", "normal", "high", "urgent")
+TICKET_CATEGORIES = (
+    "Plumbing", "Electrical", "HVAC", "Roof", "Drywall", "Pest", "Appliance", "Other",
+)
+
+
+def record_ticket_history(db: Session, ticket: MaintenanceTicket, from_status, to_status, changed_by, note=None):
+    db.add(TicketHistory(
+        ticket_id=ticket.id,
+        from_status=from_status,
+        to_status=to_status,
+        changed_by=changed_by,
+        note=note,
+    ))
 
 
 @app.post("/properties/{property_id}/maintenance-tickets", status_code=201)
@@ -1565,6 +1585,7 @@ def create_maintenance_ticket(
         raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
 
     ticket = MaintenanceTicket(
+        company_id=prop.company_id,
         property_id=property_id,
         unit_id=data.unit_id,
         title=data.title,
@@ -1574,6 +1595,8 @@ def create_maintenance_ticket(
         created_by=user.username,
     )
     db.add(ticket)
+    db.flush()  # assigns ticket.id before the history row references it
+    record_ticket_history(db, ticket, from_status=None, to_status="open", changed_by=user.username)
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
@@ -1633,9 +1656,22 @@ def update_maintenance_ticket(
         if data.priority not in TICKET_PRIORITIES:
             raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
         ticket.priority = data.priority
+    if data.category is not None:
+        if data.category not in TICKET_CATEGORIES:
+            raise HTTPException(400, f"Invalid category. Must be one of {TICKET_CATEGORIES}")
+        ticket.category = data.category
+    if data.assigned_pm is not None:
+        ticket.assigned_pm = data.assigned_pm
+    if data.assigned_vendor_id is not None:
+        ticket.assigned_vendor_id = data.assigned_vendor_id
+    if data.rating is not None:
+        ticket.rating = data.rating
     if data.status is not None:
         if data.status not in TICKET_STATUSES:
             raise HTTPException(400, f"Invalid status. Must be one of {TICKET_STATUSES}")
+        if data.status != ticket.status:
+            record_ticket_history(db, ticket, from_status=ticket.status, to_status=data.status,
+                                   changed_by=user.username, note=data.note)
         ticket.status = data.status
         ticket.closed_at = datetime.utcnow() if data.status == "closed" else None
 
@@ -1643,6 +1679,104 @@ def update_maintenance_ticket(
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
+
+
+# ---- Maintenance tickets, Day 14 additions ----
+# New routes on top of the Day 10 model above: richer creation, direct
+# ticket lookup, and a /properties/{id}/tickets alias. Old routes and
+# behaviour are untouched so PropertyManagement.js and the Day 10 tests
+# keep working as-is.
+
+@app.post("/tickets", status_code=201)
+def create_ticket(
+    data: TicketCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (
+        ROLE_PROPERTY_MANAGER,
+        ROLE_ADMIN,
+        ROLE_COMPANY_ADMIN,
+        ROLE_SUPER_ADMIN,
+        ROLE_TENANT,
+    ):
+        raise HTTPException(403, "Not authorized")
+
+    prop = db.query(Property).filter(
+        Property.id == data.property_id,
+        Property.company_id == user.company_id,
+    ).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    unit_id = data.unit_id
+    if user.role == ROLE_TENANT and user.unit_id and not unit_id:
+        unit_id = user.unit_id
+
+    if unit_id:
+        unit = db.query(Unit).filter(Unit.id == unit_id, Unit.property_id == data.property_id).first()
+        if not unit:
+            raise HTTPException(400, "Invalid unit for this property")
+
+    if data.category not in TICKET_CATEGORIES:
+        raise HTTPException(400, f"Invalid category. Must be one of {TICKET_CATEGORIES}")
+
+    if data.priority and data.priority not in TICKET_PRIORITIES:
+        raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
+
+    ticket = MaintenanceTicket(
+        company_id=prop.company_id,
+        property_id=data.property_id,
+        unit_id=unit_id,
+        title=f"{data.category} issue",  # title stays required for Day 10 UI; category carries the real detail
+        description=data.description,
+        category=data.category,
+        priority=data.priority or "normal",
+        status="open",
+        created_by=user.username,
+    )
+    db.add(ticket)
+    db.flush()
+    record_ticket_history(db, ticket, from_status=None, to_status="open", changed_by=user.username)
+    db.commit()
+    db.refresh(ticket)
+    return serialize_ticket(ticket)
+
+
+@app.get("/tickets/{ticket_id}")
+def get_ticket(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+    return serialize_ticket(ticket)
+
+
+@app.get("/properties/{property_id}/tickets")
+def get_property_tickets(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.company_id == user.company_id,
+    ).first()
+    if not prop:
+        raise HTTPException(404, "Property not found")
+
+    tickets = (
+        db.query(MaintenanceTicket)
+        .filter(MaintenanceTicket.property_id == property_id)
+        .order_by(MaintenanceTicket.created_at.desc())
+        .all()
+    )
+    return [serialize_ticket(t) for t in tickets]
 
 
 # ---- Unit photos (Day 8) ----

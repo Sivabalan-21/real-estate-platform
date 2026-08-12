@@ -193,9 +193,32 @@ class Unit(Base):
     )
 
 class MaintenanceTicket(Base):
+    """Day 10 model, extended Day 14 with company isolation, assignment,
+    and categorisation fields per the Tenant Service / RBAC LLD.
+
+    `created_by` doubles as the Day 14 spec's `raised_by` — it's already the
+    username of whoever opened the ticket (PM logging on a tenant's behalf,
+    or the tenant themselves), so a second column would just duplicate it.
+    New code should read/write it via the `raised_by` property below.
+
+    `status` stays lowercase (open/in_progress/closed) to match the Day 10
+    rows, the /owner/portfolio badge-count query, and the existing tests —
+    the Day 14 spec's 'Open' capitalisation is a display concern, not a
+    stored-value one.
+    """
     __tablename__ = "maintenance_tickets"
 
     id = Column(String, primary_key=True, default=uuid_str)
+
+    # Denormalised alongside property_id so company-wide ticket queries
+    # (Day 14) don't need a join through properties. Backfilled from
+    # property.company_id for pre-Day-14 rows.
+    company_id = Column(
+        String,
+        ForeignKey("companies.id"),
+        nullable=False,
+        index=True,
+    )
 
     property_id = Column(
         String,
@@ -214,6 +237,9 @@ class MaintenanceTicket(Base):
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
 
+    # Plumbing / Electrical / HVAC / Roof / Drywall / Pest / Appliance / Other
+    category = Column(String, nullable=True, index=True)
+
     # open -> in_progress -> closed. "Open tickets" for dashboard purposes
     # means anything not yet closed (open or in_progress).
     status = Column(String, default="open", nullable=False, index=True)
@@ -221,12 +247,86 @@ class MaintenanceTicket(Base):
     priority = Column(String, default="normal", nullable=False)  # low / normal / high / urgent
 
     created_by = Column(String, nullable=True)
+
+    # PM currently responsible for this ticket. Nullable until triaged.
+    assigned_pm = Column(String, ForeignKey("users.username"), nullable=True, index=True)
+
+    # vendors table doesn't exist until Month 2 — plain nullable column with
+    # no FK constraint for now, per the Day 14 spec. Will get a real FK once
+    # the Vendor model lands.
+    assigned_vendor_id = Column(String, nullable=True, index=True)
+
+    rating = Column(Integer, nullable=True)  # tenant's 1-5 rating after closure
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
 
+    company = relationship("Company")
     property = relationship("Property")
     unit = relationship("Unit")
+    assigned_pm_user = relationship("User", foreign_keys=[assigned_pm])
+
+    attachments = relationship(
+        "TicketAttachment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+    )
+    history = relationship(
+        "TicketHistory",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TicketHistory.created_at",
+    )
+
+    # Day 14 spec calls this field `raised_by` — it's the same value as
+    # `created_by` (whoever opened the ticket). No separate property here:
+    # this class already has a `property` relationship attribute (to the
+    # Property model), which shadows the `@property` decorator inside the
+    # class body. serialize_ticket() just reads `created_by` directly for
+    # both fields instead.
+
+
+class TicketAttachment(Base):
+    __tablename__ = "ticket_attachments"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    ticket_id = Column(
+        String,
+        ForeignKey("maintenance_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    url = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
+    type = Column(String, nullable=False)  # photo / quote / invoice
+    uploaded_by = Column(String, nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ticket = relationship("MaintenanceTicket", back_populates="attachments")
+
+
+class TicketHistory(Base):
+    __tablename__ = "ticket_history"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    ticket_id = Column(
+        String,
+        ForeignKey("maintenance_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    from_status = Column(String, nullable=True)   # null on the creation row
+    to_status = Column(String, nullable=False)
+    changed_by = Column(String, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ticket = relationship("MaintenanceTicket", back_populates="history")
 
 
 class Lease(Base):
