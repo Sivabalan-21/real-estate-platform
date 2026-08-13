@@ -162,6 +162,16 @@ export default function PropertyManagement() {
     return { occupied, total: units.length, pct };
   };
 
+  // Opens the ticket form for a property, and makes sure its units are loaded
+  // so the unit dropdown is populated even if the UNITS section was never
+  // separately expanded first.
+  const openTicketForm = (propertyId) => {
+    setShowTicketForm(propertyId);
+    resetTicketForm();
+    setTicketFormErr("");
+    if (unitsMap[propertyId] === undefined) fetchUnits(propertyId);
+  };
+
   // ---- Lease helpers (Day 7) ----
 
   const fetchLease = useCallback(async (unitId) => {
@@ -951,7 +961,7 @@ export default function PropertyManagement() {
                       <div style={s.unitsEmpty}>
                         <p style={s.unitsEmptyText}>No maintenance tickets logged</p>
                         {canManage && (
-                          <button style={s.addUnitBtn} onClick={() => { setShowTicketForm(p.id); resetTicketForm(); setTicketFormErr(""); }}>+ Log Ticket</button>
+                          <button style={s.addUnitBtn} onClick={() => openTicketForm(p.id)}>+ Log Ticket</button>
                         )}
                       </div>
                     ) : (
@@ -982,7 +992,7 @@ export default function PropertyManagement() {
                           })}
                         </div>
                         {canManage && (
-                          <button style={s.addUnitBtnInline} onClick={() => { setShowTicketForm(p.id); resetTicketForm(); setTicketFormErr(""); }}>+ Log Ticket</button>
+                          <button style={s.addUnitBtnInline} onClick={() => openTicketForm(p.id)}>+ Log Ticket</button>
                         )}
                       </>
                     )}
@@ -1016,7 +1026,9 @@ export default function PropertyManagement() {
                           value={ticketForm.unit_id}
                           onChange={e => setTicketForm({ ...ticketForm, unit_id: e.target.value })}
                         >
-                          <option value="">No specific unit</option>
+                          <option value="">
+                            {unitsLoading[p.id] ? "Loading units…" : "No specific unit"}
+                          </option>
                           {(unitsMap[p.id] || []).map(u => (
                             <option key={u.id} value={u.id}>{u.unit_number}</option>
                           ))}
