@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API = "http://187.127.180.107";
 
@@ -8,17 +9,22 @@ const STATUS_STYLES = {
   closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
 };
 
-function TenantMaintenance({ autoOpen = false }) {
+const CATEGORY_ICONS = {
+  Plumbing: "💧", Electrical: "⚡", HVAC: "❄️", Roof: "🏠",
+  Drywall: "🧱", Pest: "🐛", Appliance: "🔌", Other: "🔧",
+};
+
+// Note: as of Day 15, "+ New Request" and the empty-state CTA both send the
+// tenant to the dedicated /tenant/maintenance/new page (icon-tile category
+// picker + photo upload) instead of opening an inline form on this page.
+function TenantMaintenance() {
+  const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
   const [unit, setUnit] = useState(null);
   const [unitError, setUnitError] = useState("");
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ title: "", description: "", priority: "normal" });
-  const [saving, setSaving] = useState(false);
-  const [formErr, setFormErr] = useState("");
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -35,8 +41,10 @@ function TenantMaintenance({ autoOpen = false }) {
       setUnit(unitData);
       setUnitError("");
 
+      // Day 14's richer, company-scoped route — returns category/priority/
+      // status for every ticket on the property.
       const ticketsRes = await fetch(
-        `${API}/properties/${unitData.property_id}/maintenance-tickets`,
+        `${API}/properties/${unitData.property_id}/tickets`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const ticketsData = await ticketsRes.json();
@@ -58,48 +66,12 @@ function TenantMaintenance({ autoOpen = false }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // /tenant/maintenance/new deep-links straight into the "Report a Problem"
-  // form instead of landing on the list first.
-  useEffect(() => {
-    if (autoOpen && unit && !unitError) setShowForm(true);
-  }, [autoOpen, unit, unitError]);
-
-  const handleSubmit = async () => {
-    if (!form.title.trim()) { setFormErr("Title is required"); return; }
-    setSaving(true);
-    setFormErr("");
-    try {
-      const res = await fetch(
-        `${API}/properties/${unit.property_id}/maintenance-tickets`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            title: form.title.trim(),
-            description: form.description.trim() || null,
-            priority: form.priority,
-            unit_id: unit.id,
-          }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) { setFormErr(data.detail || "Failed to submit request"); return; }
-      setTickets(prev => [data, ...prev]);
-      setShowForm(false);
-      setForm({ title: "", description: "", priority: "normal" });
-    } catch {
-      setFormErr("Server error. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <div style={s.page}>
       <div style={s.header}>
         <h2 style={s.title}>Maintenance</h2>
         {unit && (
-          <button style={s.newBtn} onClick={() => { setShowForm(true); setFormErr(""); }}>
+          <button style={s.newBtn} onClick={() => navigate("/tenant/maintenance/new")}>
             + New Request
           </button>
         )}
@@ -115,59 +87,34 @@ function TenantMaintenance({ autoOpen = false }) {
         </p>
       )}
 
-      {!loading && !unitError && showForm && (
-        <div style={s.formBox}>
-          <input
-            style={s.input}
-            placeholder="What's the issue? (e.g. Leaking kitchen faucet)"
-            value={form.title}
-            onChange={e => setForm({ ...form, title: e.target.value })}
-          />
-          <textarea
-            style={{ ...s.input, minHeight: 70 }}
-            placeholder="Any extra detail (optional)"
-            value={form.description}
-            onChange={e => setForm({ ...form, description: e.target.value })}
-          />
-          <select
-            style={s.input}
-            value={form.priority}
-            onChange={e => setForm({ ...form, priority: e.target.value })}
-          >
-            <option value="low">Low — not urgent</option>
-            <option value="normal">Normal</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-          {formErr && <p style={s.errorText}>{formErr}</p>}
-          <div style={s.formActions}>
-            <button style={s.cancelBtn} onClick={() => setShowForm(false)}>Cancel</button>
-            <button style={s.submitBtn} disabled={saving} onClick={handleSubmit}>
-              {saving ? "Submitting…" : "Submit Request"}
-            </button>
-          </div>
-        </div>
-      )}
-
       {!loading && !unitError && (
         tickets.length === 0 ? (
           <div style={s.empty}>
             <p style={s.emptyIcon}>🛠</p>
             <p style={s.emptyText}>No maintenance requests yet</p>
+            <button style={s.newBtnOutline} onClick={() => navigate("/tenant/maintenance/new")}>
+              + Report a Problem
+            </button>
           </div>
         ) : (
           <div style={s.list}>
             {tickets.map(t => {
               const st = STATUS_STYLES[t.status] || { bg: "#f1f5f9", color: "#475569", label: t.status };
               return (
-                <div key={t.id} style={s.card}>
-                  <div style={s.cardTop}>
-                    <span style={s.cardTitle}>{t.title}</span>
-                    <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
+                <button
+                  key={t.id}
+                  style={s.card}
+                  onClick={() => navigate(`/tenant/maintenance/${t.id}`)}
+                >
+                  <span style={s.cardIcon}>{CATEGORY_ICONS[t.category] || "🛠"}</span>
+                  <div style={s.cardBody}>
+                    <div style={s.cardTop}>
+                      <span style={s.cardTitle}>{t.category || t.title}</span>
+                      <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
+                    </div>
+                    {t.description && <p style={s.cardDesc}>{t.description}</p>}
                   </div>
-                  {t.description && <p style={s.cardDesc}>{t.description}</p>}
-                  <p style={s.cardMeta}>Priority: {t.priority}</p>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -182,25 +129,23 @@ const s = {
   header:    { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   title:     { margin: 0, fontSize: 20, fontWeight: 700, color: "#0f172a" },
   newBtn:    { background: "#6366f1", color: "#fff", border: "none", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  newBtnOutline: { background: "#fff", color: "#6366f1", border: "1px solid #6366f1", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, marginTop: 12 },
   muted:     { color: "#64748b", fontSize: 14 },
-
-  formBox:   { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 16, marginBottom: 20, maxWidth: 420 },
-  input:     { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, marginBottom: 12, outline: "none", boxSizing: "border-box", fontFamily: "inherit" },
-  errorText: { color: "#ef4444", fontSize: 12, margin: "0 0 10px" },
-  formActions:{ display: "flex", justifyContent: "flex-end", gap: 8 },
-  cancelBtn: { background: "#f1f5f9", color: "#475569", border: "none", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  submitBtn: { background: "#6366f1", color: "#fff", border: "none", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 
   empty:     { textAlign: "center", padding: "60px 20px", color: "#94a3b8" },
   emptyIcon: { fontSize: 32, margin: 0 },
   emptyText: { fontSize: 14, fontWeight: 600, color: "#64748b", margin: "8px 0 0" },
 
   list:      { display: "flex", flexDirection: "column", gap: 10, maxWidth: 480 },
-  card:      { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 14 },
+  card:      {
+    display: "flex", gap: 12, textAlign: "left", background: "#fff", border: "1px solid #e2e8f0",
+    borderRadius: 10, padding: 14, cursor: "pointer", fontFamily: "inherit", width: "100%", boxSizing: "border-box",
+  },
+  cardIcon:  { fontSize: 22, flexShrink: 0 },
+  cardBody:  { flex: 1, minWidth: 0 },
   cardTop:   { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
   cardTitle: { fontSize: 14, fontWeight: 600, color: "#0f172a" },
-  cardDesc:  { margin: "6px 0 0", fontSize: 12, color: "#64748b" },
-  cardMeta:  { margin: "8px 0 0", fontSize: 11, color: "#94a3b8", textTransform: "capitalize" },
+  cardDesc:  { margin: "6px 0 0", fontSize: 12, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   pill:      { fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20, flexShrink: 0 },
 };
 

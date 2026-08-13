@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr
 
@@ -176,3 +176,16 @@ class TicketCreate(BaseModel):
     category: str
     description: Optional[str] = None
     priority: Optional[str] = "normal"
+
+
+class TicketAttachmentResponse(BaseModel):
+    id: str
+    ticket_id: str
+    url: str
+    filename: str
+    type: str
+    uploaded_by: Optional[str] = None
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True

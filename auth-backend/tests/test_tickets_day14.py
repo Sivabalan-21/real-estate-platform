@@ -116,3 +116,71 @@ def test_ticket_history_row_created_on_status_change_via_existing_put_route(
     assert len(history) == 2
     assert history[1].from_status == "open"
     assert history[1].to_status == "closed"
+
+
+# ---- Day 15: tenant maintenance request creation, with photo attachments ----
+
+def _fake_png_bytes():
+    # Minimal valid 1x1 PNG so content-type/size checks pass.
+    import base64
+    return base64.b64decode(
+        b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+
+def test_submit_ticket_no_photos_creates_ticket(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant = make_tenant(db_session, company_a)
+
+    res = client_factory(tenant).post(
+        "/tickets", json={"property_id": prop.id, "category": "Plumbing", "description": "Burst pipe"},
+    )
+    assert res.status_code == 201
+    assert res.json()["status"] == "open"
+
+
+def test_submit_ticket_with_three_photos_links_three_attachments(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant = make_tenant(db_session, company_a)
+    client = client_factory(tenant)
+
+    ticket = client.post(
+        "/tickets", json={"property_id": prop.id, "category": "Electrical", "description": "Sparking outlet"},
+    ).json()
+
+    png = _fake_png_bytes()
+    files = [("files", (f"photo{i}.png", png, "image/png")) for i in range(3)]
+    res = client.post(f"/tickets/{ticket['id']}/attachments", files=files)
+    assert res.status_code == 201
+    attachments = res.json()
+    assert len(attachments) == 3
+    assert all(a["type"] == "photo" for a in attachments)
+
+    get_res = client.get(f"/tickets/{ticket['id']}")
+    assert len(get_res.json()["attachments"]) == 3
+
+
+def test_submit_ticket_missing_category_returns_error(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant = make_tenant(db_session, company_a)
+
+    # category omitted entirely -> FastAPI/Pydantic validation error
+    res = client_factory(tenant).post("/tickets", json={"property_id": prop.id, "description": "no category"})
+    assert res.status_code == 422
+
+
+def test_ticket_visible_in_pm_property_tickets_immediately_after_submit(
+    db_session, company_a, pm_user, client_factory
+):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant = make_tenant(db_session, company_a)
+
+    client_factory(tenant).post(
+        "/tickets", json={"property_id": prop.id, "category": "Roof", "description": "Leak in ceiling"},
+    )
+
+    res = client_factory(pm_user).get(f"/properties/{prop.id}/tickets")
+    assert res.status_code == 200
+    tickets = res.json()
+    assert len(tickets) == 1
+    assert tickets[0]["category"] == "Roof"

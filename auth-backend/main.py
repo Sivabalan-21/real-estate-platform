@@ -1754,7 +1754,9 @@ def get_ticket(
         raise HTTPException(404, "Ticket not found")
     if ticket.company_id != user.company_id:
         raise HTTPException(403, "Not authorized")
-    return serialize_ticket(ticket)
+    result = serialize_ticket(ticket)
+    result["attachments"] = [serialize_attachment(a) for a in ticket.attachments]
+    return result
 
 
 @app.get("/properties/{property_id}/tickets")
@@ -1777,6 +1779,104 @@ def get_property_tickets(
         .all()
     )
     return [serialize_ticket(t) for t in tickets]
+
+
+MAX_TICKET_PHOTOS_PER_UPLOAD = 3
+
+
+def serialize_attachment(attachment: TicketAttachment):
+    return {
+        "id": attachment.id,
+        "ticket_id": attachment.ticket_id,
+        "url": attachment.url,
+        "filename": attachment.filename,
+        "type": attachment.type,
+        "uploaded_by": attachment.uploaded_by,
+        "uploaded_at": attachment.uploaded_at,
+    }
+
+
+@app.post("/tickets/{ticket_id}/attachments", status_code=201)
+async def upload_ticket_attachments(
+    ticket_id: str,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+
+    # Tenant can only attach photos to their own ticket. PM/Admin roles can
+    # attach to any ticket in their company (e.g. adding a vendor quote later).
+    if user.role == ROLE_TENANT and ticket.created_by != user.username:
+        raise HTTPException(403, "Not authorized")
+
+    if len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
+        raise HTTPException(400, f"Max {MAX_TICKET_PHOTOS_PER_UPLOAD} files per upload")
+
+    existing_count = db.query(TicketAttachment).filter(TicketAttachment.ticket_id == ticket_id).count()
+    if existing_count + len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
+        raise HTTPException(400, f"This ticket already has {existing_count} attachment(s); max {MAX_TICKET_PHOTOS_PER_UPLOAD} total")
+
+    contents_by_file = []
+    for f in files:
+        if f.content_type not in ALLOWED_PHOTO_TYPES:
+            raise HTTPException(400, f"'{f.filename}' is not a supported image type")
+        data = await f.read()
+        if len(data) > MAX_PHOTO_SIZE:
+            raise HTTPException(400, f"'{f.filename}' is too large (max 5MB)")
+        contents_by_file.append(data)
+
+    upload_dir = os.path.join("uploads", "tickets", ticket_id)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    saved = []
+    for f, data in zip(files, contents_by_file):
+        ext = os.path.splitext(f.filename)[1] or ".jpg"
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(upload_dir, stored_name)
+        with open(filepath, "wb") as out:
+            out.write(data)
+
+        attachment = TicketAttachment(
+            ticket_id=ticket_id,
+            url=f"{BACKEND_URL}/uploads/tickets/{ticket_id}/{stored_name}",
+            filename=f.filename,
+            type="photo",
+            uploaded_by=user.username,
+        )
+        db.add(attachment)
+        saved.append(attachment)
+
+    db.commit()
+    for a in saved:
+        db.refresh(a)
+
+    return [serialize_attachment(a) for a in saved]
+
+
+@app.get("/tickets/{ticket_id}/attachments")
+def get_ticket_attachments(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+
+    attachments = (
+        db.query(TicketAttachment)
+        .filter(TicketAttachment.ticket_id == ticket_id)
+        .order_by(TicketAttachment.uploaded_at.asc())
+        .all()
+    )
+    return [serialize_attachment(a) for a in attachments]
 
 
 # ---- Unit photos (Day 8) ----

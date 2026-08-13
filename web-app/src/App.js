@@ -32,6 +32,8 @@ import React from "react";
   import TenantLayout from "./TenantLayout";
   import TenantDashboard from "./TenantDashboard";
   import TenantMaintenance from "./TenantMaintenance";
+  import MaintenanceNew from "./MaintenanceNew";
+  import MaintenanceDetail from "./MaintenanceDetail";
   import TenantPayments from "./TenantPayments";
 
   function App() {
@@ -83,7 +85,8 @@ import React from "react";
           <Route path="/tenant"                  element={<TenantLayout />}>
             <Route path="dashboard"              element={<TenantDashboard />} />
             <Route path="maintenance"            element={<TenantMaintenance />} />
-            <Route path="maintenance/new"        element={<TenantMaintenance autoOpen />} />
+            <Route path="maintenance/new"        element={<MaintenanceNew />} />
+            <Route path="maintenance/:id"        element={<MaintenanceDetail />} />
             <Route path="payments"               element={<TenantPayments />} />
           </Route>
 
