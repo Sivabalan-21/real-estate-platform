@@ -1526,6 +1526,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "rating": ticket.rating,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
+        "last_update_at": ticket.updated_at,  # Day 16 spec's naming; same value as updated_at
         "closed_at": ticket.closed_at,
         # Capped at 3 (MAX_TICKET_PHOTOS_PER_UPLOAD), so cheap to include on
         # every ticket everywhere it's serialized — PM/Owner views need to
@@ -1747,6 +1748,30 @@ def create_ticket(
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
+
+
+@app.get("/tenant/tickets")
+def get_my_tickets(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Day 16: self-scoped ticket list for the tenant portal. Only tickets
+    this specific tenant submitted themselves (created_by == their own
+    username) — a PM-logged ticket on a tenant's behalf won't show up here,
+    which matches 'view own tickets' rather than 'view tickets on my unit'."""
+    if user.role != ROLE_TENANT:
+        raise HTTPException(403, "Not authorized")
+
+    tickets = (
+        db.query(MaintenanceTicket)
+        .filter(
+            MaintenanceTicket.company_id == user.company_id,
+            MaintenanceTicket.created_by == user.username,
+        )
+        .order_by(MaintenanceTicket.created_at.desc())
+        .all()
+    )
+    return [serialize_ticket(t) for t in tickets]
 
 
 @app.get("/tickets/{ticket_id}")

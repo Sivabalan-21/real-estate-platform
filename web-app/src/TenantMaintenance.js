@@ -14,14 +14,24 @@ const CATEGORY_ICONS = {
   Drywall: "🧱", Pest: "🐛", Appliance: "🔌", Other: "🔧",
 };
 
+function formatDate(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
 // Note: as of Day 15, "+ New Request" and the empty-state CTA both send the
 // tenant to the dedicated /tenant/maintenance/new page (icon-tile category
 // picker + photo upload) instead of opening an inline form on this page.
+// As of Day 16, the ticket list itself comes from the self-scoped
+// GET /tenant/tickets (only tickets this tenant personally submitted) rather
+// than the property-wide route filtered client-side.
 function TenantMaintenance() {
   const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
-  const [unit, setUnit] = useState(null);
+  const [hasUnit, setHasUnit] = useState(false);
   const [unitError, setUnitError] = useState("");
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +39,9 @@ function TenantMaintenance() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
+      // /units/me is only used here to gate "+ New Request" on having an
+      // active lease and to show a friendly message when there isn't one —
+      // the ticket list itself no longer depends on it.
       const unitRes = await fetch(`${API}/units/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -38,25 +51,14 @@ function TenantMaintenance() {
         setLoading(false);
         return;
       }
-      setUnit(unitData);
+      setHasUnit(true);
       setUnitError("");
 
-      // Day 14's richer, company-scoped route — returns category/priority/
-      // status for every ticket on the property.
-      const ticketsRes = await fetch(
-        `${API}/properties/${unitData.property_id}/tickets`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const ticketsRes = await fetch(`${API}/tenant/tickets`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const ticketsData = await ticketsRes.json();
-      if (ticketsRes.ok) {
-        // A tenant only sees tickets tied to their own unit (or unassigned
-        // ones raised on the property before a unit was picked).
-        setTickets(
-          Array.isArray(ticketsData)
-            ? ticketsData.filter(t => !t.unit_id || t.unit_id === unitData.id)
-            : []
-        );
-      }
+      if (ticketsRes.ok) setTickets(Array.isArray(ticketsData) ? ticketsData : []);
     } catch {
       setUnitError("Server error. Please try again.");
     } finally {
@@ -70,7 +72,7 @@ function TenantMaintenance() {
     <div style={s.page}>
       <div style={s.header}>
         <h2 style={s.title}>Maintenance</h2>
-        {unit && (
+        {hasUnit && (
           <button style={s.newBtn} onClick={() => navigate("/tenant/maintenance/new")}>
             + New Request
           </button>
@@ -113,6 +115,7 @@ function TenantMaintenance() {
                       <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
                     </div>
                     {t.description && <p style={s.cardDesc}>{t.description}</p>}
+                    <p style={s.cardDate}>{formatDate(t.created_at)}</p>
                   </div>
                 </button>
               );
@@ -145,7 +148,11 @@ const s = {
   cardBody:  { flex: 1, minWidth: 0 },
   cardTop:   { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
   cardTitle: { fontSize: 14, fontWeight: 600, color: "#0f172a" },
-  cardDesc:  { margin: "6px 0 0", fontSize: 12, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  cardDesc:  {
+    margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4,
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+  },
+  cardDate:  { margin: "6px 0 0", fontSize: 11, color: "#94a3b8" },
   pill:      { fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20, flexShrink: 0 },
 };
 

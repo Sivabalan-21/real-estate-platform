@@ -184,3 +184,43 @@ def test_ticket_visible_in_pm_property_tickets_immediately_after_submit(
     tickets = res.json()
     assert len(tickets) == 1
     assert tickets[0]["category"] == "Roof"
+
+
+# ---- Day 16: GET /tenant/tickets, self-scoped to the logged-in tenant ----
+
+def test_tenant_with_three_tickets_sees_all_three_newest_first(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant = make_tenant(db_session, company_a)
+    client = client_factory(tenant)
+
+    ids_in_order = []
+    for cat in ("Plumbing", "Electrical", "HVAC"):
+        t = client.post("/tickets", json={"property_id": prop.id, "category": cat}).json()
+        ids_in_order.append(t["id"])
+
+    res = client.get("/tenant/tickets")
+    assert res.status_code == 200
+    tickets = res.json()
+    assert len(tickets) == 3
+    # newest first == reverse creation order
+    assert [t["id"] for t in tickets] == list(reversed(ids_in_order))
+
+
+def test_tenant_tickets_excludes_other_tenants_tickets(db_session, company_a, pm_user, client_factory):
+    prop = make_property(db_session, company_a, pm_user.username)
+    tenant_a = make_tenant(db_session, company_a, username="tenant_owns_this")
+    tenant_b = make_tenant(db_session, company_a, username="tenant_other")
+
+    client_factory(tenant_a).post("/tickets", json={"property_id": prop.id, "category": "Plumbing"})
+    client_factory(tenant_b).post("/tickets", json={"property_id": prop.id, "category": "Electrical"})
+
+    res = client_factory(tenant_a).get("/tenant/tickets")
+    tickets = res.json()
+    assert len(tickets) == 1
+    assert tickets[0]["category"] == "Plumbing"
+    assert tickets[0]["raised_by"] == "tenant_owns_this"
+
+
+def test_tenant_tickets_forbidden_for_non_tenant_role(db_session, company_a, pm_user, client_factory):
+    res = client_factory(pm_user).get("/tenant/tickets")
+    assert res.status_code == 403
