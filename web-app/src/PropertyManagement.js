@@ -975,6 +975,15 @@ export default function PropertyManagement() {
                                 <div style={s.ticketMain}>
                                   <span style={s.ticketTitle}>{t.title}</span>
                                   {t.description && <span style={s.ticketDesc}>{t.description}</span>}
+                                  {t.attachments && t.attachments.length > 0 && (
+                                    <div style={s.ticketPhotoRow}>
+                                      {t.attachments.map(a => (
+                                        <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+                                          <img src={a.url} alt={a.filename} style={s.ticketPhotoThumb} />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                                 <span style={{ ...s.pill, background: pr.bg, color: pr.color }}>{t.priority}</span>
                                 <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
@@ -1466,6 +1475,8 @@ const s = {
   ticketMain:      { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 },
   ticketTitle:     { fontSize: 13, fontWeight: 600, color: "#0f172a" },
   ticketDesc:      { fontSize: 11, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  ticketPhotoRow:  { display: "flex", gap: 6, marginTop: 6 },
+  ticketPhotoThumb:{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", border: "1px solid #e2e8f0" },
   pill:            { fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20, textTransform: "capitalize", flexShrink: 0 },
   closeTicketBtn:  { background: "#0f172a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 },
   ticketFormBox:   { marginTop: 12, padding: 14, background: "#f8fafc", borderRadius: 8 },

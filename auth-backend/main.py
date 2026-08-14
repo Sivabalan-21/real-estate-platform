@@ -1527,6 +1527,12 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
         "closed_at": ticket.closed_at,
+        # Capped at 3 (MAX_TICKET_PHOTOS_PER_UPLOAD), so cheap to include on
+        # every ticket everywhere it's serialized — PM/Owner views need to
+        # see at a glance that a tenant attached photos, not just the detail
+        # page. serialize_attachment is defined further down this file; that's
+        # fine, Python only resolves the name when this function actually runs.
+        "attachments": [serialize_attachment(a) for a in ticket.attachments],
     }
 
 
@@ -1754,9 +1760,7 @@ def get_ticket(
         raise HTTPException(404, "Ticket not found")
     if ticket.company_id != user.company_id:
         raise HTTPException(403, "Not authorized")
-    result = serialize_ticket(ticket)
-    result["attachments"] = [serialize_attachment(a) for a in ticket.attachments]
-    return result
+    return serialize_ticket(ticket)
 
 
 @app.get("/properties/{property_id}/tickets")
