@@ -258,6 +258,11 @@ class MaintenanceTicket(Base):
 
     rating = Column(Integer, nullable=True)  # tenant's 1-5 rating after closure
 
+    # Day 17: internal PM-facing note, single text field for now. Real
+    # threaded ticket_comments with visible_to scoping (owner_pm vs tenant)
+    # lands Month 2 / Day 27 per the spec — this is the interim shape.
+    pm_notes = Column(String, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)

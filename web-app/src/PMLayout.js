@@ -35,6 +35,7 @@ function PMLayout() {
     { icon: "⊞", label: "Dashboard",  path: "/pm/dashboard" },
     { icon: "🏢", label: "Properties", path: "/pm/properties" },
     { icon: "🏠", label: "Tenants",    path: "/pm/users/view" },
+    { icon: "🛠️", label: "Tickets",    path: "/pm/tickets" },
   ];
 
   if (role && role !== "Property Manager") return null; // redirect effect above is already firing
@@ -52,7 +53,7 @@ function PMLayout() {
 
         <nav style={s.nav}>
           {NAV.map(n => {
-            const active = location.pathname === n.path;
+            const active = location.pathname === n.path || location.pathname.startsWith(n.path + "/");
             return (
               <div
                 key={n.path}

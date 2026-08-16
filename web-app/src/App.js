@@ -18,6 +18,8 @@ import React from "react";
   import PropertyManagement from "./PropertyManagement";
   import PMUserManagement from "./PMUserManagement";
   import PMCreate from "./PMCreate";
+  import PMTickets from "./PMTickets";
+  import PMTicketDetail from "./PMTicketDetail";
   import CreateUser from "./CreateUser";
   import CompanyPortal from "./CompanyPortal";
   import CompanySettings from "./CompanySettings";
@@ -70,6 +72,8 @@ import React from "react";
             <Route path="manage"                 element={<PMUserManagement />} />
             <Route path="users/create"           element={<CreateUser />} />
             <Route path="users/view"             element={<ViewUsers />} />
+            <Route path="tickets"                element={<PMTickets />} />
+            <Route path="tickets/:id"            element={<PMTicketDetail />} />
           </Route>
 
           {/* ── OWNER ────────────────────────────────────────── */}

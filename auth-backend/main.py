@@ -1513,7 +1513,9 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "id": ticket.id,
         "company_id": ticket.company_id,
         "property_id": ticket.property_id,
+        "property_name": ticket.property.name if ticket.property else None,
         "unit_id": ticket.unit_id,
+        "unit_number": ticket.unit.unit_number if ticket.unit else None,
         "title": ticket.title,
         "description": ticket.description,
         "category": ticket.category,
@@ -1524,6 +1526,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "assigned_pm": ticket.assigned_pm,
         "assigned_vendor_id": ticket.assigned_vendor_id,
         "rating": ticket.rating,
+        "pm_notes": ticket.pm_notes,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
         "last_update_at": ticket.updated_at,  # Day 16 spec's naming; same value as updated_at
@@ -1808,6 +1811,168 @@ def get_property_tickets(
         .all()
     )
     return [serialize_ticket(t) for t in tickets]
+
+
+# ---- PM ticket management (Day 17) ----
+# The PM's operational view: every ticket across every property they're
+# assigned to (via PropertyAssignment), not just tickets they personally
+# raised. Company isolation is enforced the same way as everywhere else —
+# MaintenanceTicket.company_id == user.company_id — on top of the
+# assignment scoping, so a PM can never see another company's tickets even
+# if a property_id/company_id pairing were ever mismatched.
+
+def _pm_assigned_property_ids(db: Session, pm_username: str):
+    return [
+        row[0] for row in
+        db.query(PropertyAssignment.property_id)
+        .filter(PropertyAssignment.pm_username == pm_username)
+        .all()
+    ]
+
+
+@app.get("/pm/properties")
+def get_pm_properties(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """The properties a PM is actually assigned to, via PropertyAssignment —
+    distinct from GET /properties, which for a PM currently filters on
+    created_by and can miss properties a Company Admin assigned them to
+    without them personally creating it. Used to populate the ticket-view
+    property filter so it only ever offers properties the PM can see
+    tickets for."""
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+    if not assigned_property_ids:
+        return []
+
+    props = (
+        db.query(Property)
+        .filter(Property.id.in_(assigned_property_ids), Property.company_id == user.company_id)
+        .order_by(Property.name)
+        .all()
+    )
+    return [serialize_property(p) for p in props]
+
+
+@app.get("/pm/tickets")
+def get_pm_tickets(
+    status: str = None,
+    property_id: str = None,
+    sort: str = "created_at",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    if status and status not in TICKET_STATUSES:
+        raise HTTPException(400, f"status must be one of {TICKET_STATUSES}")
+
+    assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+    if not assigned_property_ids:
+        return []
+
+    query = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.company_id == user.company_id,
+        MaintenanceTicket.property_id.in_(assigned_property_ids),
+    )
+
+    if property_id:
+        if property_id not in assigned_property_ids:
+            raise HTTPException(403, "Not authorized for this property")
+        query = query.filter(MaintenanceTicket.property_id == property_id)
+
+    if status:
+        query = query.filter(MaintenanceTicket.status == status)
+
+    sort_column = MaintenanceTicket.updated_at if sort == "updated_at" else MaintenanceTicket.created_at
+    query = query.order_by(sort_column.desc())
+
+    return [serialize_ticket(t) for t in query.all()]
+
+
+@app.get("/pm/tickets/{ticket_id}")
+def get_pm_ticket_detail(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket or ticket.company_id != user.company_id:
+        raise HTTPException(404, "Ticket not found")
+
+    assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+    if ticket.property_id not in assigned_property_ids:
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    data = serialize_ticket(ticket)
+
+    # Whoever raised the ticket, if they're a real platform user (usually
+    # the tenant, occasionally a PM logging on the tenant's behalf) — the
+    # detail page needs contact info the list view doesn't.
+    raised_by_user = (
+        db.query(User).filter(User.username == ticket.created_by).first()
+        if ticket.created_by else None
+    )
+    data["tenant"] = (
+        {
+            "username": raised_by_user.username,
+            "full_name": raised_by_user.full_name,
+            "email": raised_by_user.email,
+            "phone": raised_by_user.phone,
+        }
+        if raised_by_user else None
+    )
+
+    return data
+
+
+@app.patch("/pm/tickets/{ticket_id}")
+def update_pm_ticket(
+    ticket_id: str,
+    data: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """PM-only: update status and/or the internal pm_notes field. A basic
+    dropdown for now — the enforced open -> in_progress -> closed state
+    machine is Day 24 per the spec, so any status in TICKET_STATUSES is
+    accepted here without transition validation."""
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket or ticket.company_id != user.company_id:
+        raise HTTPException(404, "Ticket not found")
+
+    assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+    if ticket.property_id not in assigned_property_ids:
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    if "status" in data:
+        new_status = data["status"]
+        if new_status not in TICKET_STATUSES:
+            raise HTTPException(400, f"status must be one of {TICKET_STATUSES}")
+        if new_status != ticket.status:
+            record_ticket_history(db, ticket, ticket.status, new_status, user.username)
+            ticket.status = new_status
+            if new_status == "closed":
+                ticket.closed_at = datetime.utcnow()
+            elif ticket.closed_at:
+                ticket.closed_at = None  # reopened
+
+    if "pm_notes" in data:
+        ticket.pm_notes = (data.get("pm_notes") or "").strip() or None
+
+    db.commit()
+    db.refresh(ticket)
+    return serialize_ticket(ticket)
 
 
 MAX_TICKET_PHOTOS_PER_UPLOAD = 3
