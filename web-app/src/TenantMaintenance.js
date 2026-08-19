@@ -5,6 +5,8 @@ const API = "http://187.127.180.107";
 
 const STATUS_STYLES = {
   open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In review" },
+  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
   in_progress: { bg: "#fef3c7", color: "#92400e", label: "In progress" },
   closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
 };

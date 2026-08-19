@@ -5,6 +5,8 @@ const API = "http://187.127.180.107";
 
 const STATUS_STYLES = {
   open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In review" },
+  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
   in_progress: { bg: "#fef3c7", color: "#92400e", label: "In progress" },
   closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
 };
@@ -14,13 +16,12 @@ const CATEGORY_ICONS = {
   Drywall: "🧱", Pest: "🐛", Appliance: "🔌", Other: "🔧",
 };
 
-// Day 16: 5-stage visual stepper laid over the current 3-value `status`
-// column (open/in_progress/closed). 'In Review' and 'Scheduled' aren't
-// reachable yet — the backend only ever produces open/in_progress/closed
-// until Day 24 formalizes richer transitions — but the stepper is built to
-// support them once that lands, so this file won't need to change again.
+// Day 16: 5-stage visual stepper. Day 17 expanded the backend's status set
+// to the full 5 values a PM can actually set (open/in_review/scheduled/
+// in_progress/closed), so this is now a direct 1:1 mapping rather than an
+// approximation over a 3-value column.
 const STEPS = ["Submitted", "In Review", "Scheduled", "In Progress", "Done"];
-const STATUS_TO_STEP = { open: 0, in_progress: 3, closed: 4 };
+const STATUS_TO_STEP = { open: 0, in_review: 1, scheduled: 2, in_progress: 3, closed: 4 };
 
 function formatDateTime(dateStr) {
   if (!dateStr) return "—";

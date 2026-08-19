@@ -5,6 +5,8 @@ const API = "http://187.127.180.107";
 
 const STATUS_STYLES = {
   open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In Review" },
+  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
   in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" },
   closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
 };
@@ -84,6 +86,8 @@ function PMTickets() {
           <select style={s.select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
             <option value="open">Open</option>
+            <option value="in_review">In Review</option>
+            <option value="scheduled">Scheduled</option>
             <option value="in_progress">In Progress</option>
             <option value="closed">Closed</option>
           </select>

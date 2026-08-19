@@ -175,6 +175,40 @@ def test_status_update_persists(db_session, company_a, client_factory):
     assert reload_res.json()["status"] == "in_progress"
 
 
+def test_status_update_open_to_in_review_persists(db_session, company_a, client_factory):
+    """The literal Day 17 acceptance criterion: 'PM updates status from
+    Open to In Review -> change persists after page reload.' Distinct from
+    test_status_update_persists above (which used in_progress) because
+    in_review wasn't a valid TICKET_STATUSES value until this fix."""
+    pm = make_pm(db_session, company_a)
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
+
+    client = client_factory(pm)
+    patch_res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "in_review"})
+    assert patch_res.status_code == 200
+    assert patch_res.json()["status"] == "in_review"
+
+    reload_res = client.get(f"/pm/tickets/{ticket.id}")
+    assert reload_res.status_code == 200
+    assert reload_res.json()["status"] == "in_review"
+
+
+def test_status_update_scheduled_is_valid(db_session, company_a, client_factory):
+    pm = make_pm(db_session, company_a)
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
+
+    client = client_factory(pm)
+    res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "scheduled"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "scheduled"
+
+
 def test_pm_can_add_note(db_session, company_a, client_factory):
     pm = make_pm(db_session, company_a)
     prop = make_property(db_session, company_a)

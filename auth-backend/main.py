@@ -1540,7 +1540,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
     }
 
 
-TICKET_STATUSES = ("open", "in_progress", "closed")
+TICKET_STATUSES = ("open", "in_review", "scheduled", "in_progress", "closed")
 TICKET_PRIORITIES = ("low", "normal", "high", "urgent")
 TICKET_CATEGORIES = (
     "Plumbing", "Electrical", "HVAC", "Roof", "Drywall", "Pest", "Appliance", "Other",
