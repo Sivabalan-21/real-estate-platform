@@ -1975,6 +1975,101 @@ def update_pm_ticket(
     return serialize_ticket(ticket)
 
 
+# ---- Owner ticket view (Day 18) ----
+# Read-only ticket visibility for the Owner role. Owner-to-property ownership
+# still isn't tracked per-property (same simplification /owner/portfolio
+# already makes, see the Day 10 comment above) — so an Owner sees every
+# ticket across every property in their company. Action buttons
+# (approve/reject) land Day 31; this endpoint and OwnerTickets.js are built
+# now so that day only has to add the action column, not the view or
+# filtering logic.
+
+OWNER_APPROVAL_STATUS = "pending_owner_approval"
+
+
+def serialize_owner_ticket(ticket: MaintenanceTicket):
+    data = serialize_ticket(ticket)
+    data["assigned_pm_name"] = (
+        ticket.assigned_pm_user.full_name if ticket.assigned_pm_user else None
+    )
+    # No quote/estimate model exists yet (Month 2 vendor work) — placeholder
+    # key so the frontend column is already wired and doesn't need a shape
+    # change once quotes land.
+    data["quote_amount"] = None
+    # Badge is wired now but will always be False today — nothing sets
+    # OWNER_APPROVAL_STATUS until the Day 31 owner-approval workflow lands.
+    data["approval_required"] = ticket.status == OWNER_APPROVAL_STATUS
+    return data
+
+
+@app.get("/owner/tickets")
+def get_owner_tickets(
+    property_id: str = None,
+    status: str = None,
+    category: str = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_OWNER:
+        raise HTTPException(403, "Not authorized")
+
+    if property_id:
+        prop = db.query(Property).filter(
+            Property.id == property_id,
+            Property.company_id == user.company_id,
+        ).first()
+        if not prop:
+            raise HTTPException(404, "Property not found")
+
+    valid_statuses = TICKET_STATUSES + (OWNER_APPROVAL_STATUS,)
+    if status and status not in valid_statuses:
+        raise HTTPException(400, f"status must be one of {valid_statuses}")
+
+    if category and category not in TICKET_CATEGORIES:
+        raise HTTPException(400, f"category must be one of {TICKET_CATEGORIES}")
+
+    query = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.company_id == user.company_id,
+    )
+
+    if property_id:
+        query = query.filter(MaintenanceTicket.property_id == property_id)
+
+    if category:
+        query = query.filter(MaintenanceTicket.category == category)
+
+    if status:
+        # Explicit status wins over the default Open/In-Progress view.
+        query = query.filter(MaintenanceTicket.status == status)
+    else:
+        # Default per the Day 18 spec: Open and In-Progress only.
+        # in_review/scheduled tickets are also "not closed" but aren't Open
+        # or In-Progress, so they're left out of the default and only show
+        # up via an explicit ?status= filter.
+        query = query.filter(MaintenanceTicket.status.in_(("open", "in_progress")))
+
+    tickets = query.order_by(MaintenanceTicket.created_at.desc()).all()
+
+    # Pending-approval count is wired now (Day 18) so Day 31 only has to add
+    # action buttons — always 0 today since nothing sets
+    # OWNER_APPROVAL_STATUS yet. Scoped to company + property_id (if given),
+    # but deliberately independent of the status/category filters above so
+    # the banner count doesn't shift just because someone filtered the table.
+    pending_query = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.company_id == user.company_id,
+        MaintenanceTicket.status == OWNER_APPROVAL_STATUS,
+    )
+    if property_id:
+        pending_query = pending_query.filter(MaintenanceTicket.property_id == property_id)
+    pending_approval_count = pending_query.count()
+
+    return {
+        "tickets": [serialize_owner_ticket(t) for t in tickets],
+        "open_count": len(tickets),
+        "pending_approval_count": pending_approval_count,
+    }
+
+
 MAX_TICKET_PHOTOS_PER_UPLOAD = 3
 
 

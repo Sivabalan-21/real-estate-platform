@@ -36,6 +36,7 @@ function OwnerLayout() {
   const NAV = [
     { icon: "⊞", label: "Dashboard",  path: "/owner/dashboard" },
     { icon: "🏢", label: "Properties", path: "/owner/properties" },
+    { icon: "🛠️", label: "Tickets",    path: "/owner/tickets" },
     { icon: "✅", label: "Approvals",  path: "/owner/approvals" },
     { icon: "📊", label: "Reports",    path: "/owner/reports" },
   ];

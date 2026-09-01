@@ -30,6 +30,7 @@ import React from "react";
   import OwnerPropertyDetail from "./OwnerPropertyDetail";
   import OwnerApprovals from "./OwnerApprovals";
   import OwnerReports from "./OwnerReports";
+  import OwnerTickets from "./OwnerTickets";
 
   import TenantLayout from "./TenantLayout";
   import TenantDashboard from "./TenantDashboard";
@@ -81,6 +82,7 @@ import React from "react";
             <Route path="dashboard"              element={<OwnerDashboard />} />
             <Route path="properties"             element={<OwnerProperties />} />
             <Route path="properties/:id"         element={<OwnerPropertyDetail />} />
+            <Route path="tickets"                element={<OwnerTickets />} />
             <Route path="approvals"              element={<OwnerApprovals />} />
             <Route path="reports"                element={<OwnerReports />} />
           </Route>
