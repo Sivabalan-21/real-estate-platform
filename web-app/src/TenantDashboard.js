@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API = "http://187.127.180.107";
+const API = "http://localhost:8000";
 
 function useIsMobile(breakpoint = 640) {
   const [isMobile, setIsMobile] = useState(

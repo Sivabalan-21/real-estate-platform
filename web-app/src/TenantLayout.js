@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
 
-const API = "http://187.127.180.107";
+const API = "http://localhost:8000";
 
 // Where each role's own dashboard lives — used to bounce a mismatched role
 // away from the Tenant shell instead of rendering it for the wrong user.

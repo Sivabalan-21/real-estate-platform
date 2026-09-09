@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API = "http://187.127.180.107";
+const API = "http://localhost:8000";
 
 const CATEGORIES = [
   { value: "Plumbing",   label: "Plumbing",   icon: "💧" },

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 
-const API = "https://194.164.149.22/api";
+const API = "http://localhost:8000";
 
 function AdminProperties() {
   const token = localStorage.getItem("token");

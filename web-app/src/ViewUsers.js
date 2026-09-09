@@ -117,7 +117,7 @@ function ViewUsers() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://194.164.149.22/api/users/my-hierarchy", {
+      const res = await fetch("http://localhost:8000/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { navigate("/"); return; }
@@ -146,7 +146,7 @@ function ViewUsers() {
       }, 30000);
     }
 
-    fetch("http://194.164.149.22/api/companies", {
+    fetch("http://localhost:8000/companies", {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())
@@ -182,7 +182,7 @@ function ViewUsers() {
     setCreating(true);
     setCreateErr("");
     try {
-      const res = await fetch("http://194.164.149.22/api/users/create", {
+      const res = await fetch("http://localhost:8000/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -224,7 +224,7 @@ function ViewUsers() {
   const handleLogoUpload = async () => {
     setLogoUploading(true);
     try {
-      const res = await fetch(`http://194.164.149.22/api/company/send-logo-upload-link/${editUser.username}`, {
+      const res = await fetch(`http://localhost:8000/company/send-logo-upload-link/${editUser.username}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -255,7 +255,7 @@ function ViewUsers() {
       };
       if (editEmail && editEmail !== editUser.email) body.email = editEmail;
 
-      const url = `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`;
+      const url = `http://localhost:8000/users/update/${editUser.username || editUser.user_id}`;
       const res = await fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -288,7 +288,7 @@ function ViewUsers() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://194.164.149.22/api/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -309,7 +309,7 @@ function ViewUsers() {
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://194.164.149.22/api/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });

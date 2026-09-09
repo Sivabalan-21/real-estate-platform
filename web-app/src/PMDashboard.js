@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API = "http://194.164.149.22/api";
+const API = "http://localhost:8000";
 
 function PMDashboard() {
   const navigate = useNavigate();

@@ -14,7 +14,7 @@ function ResetPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
-    fetch(`http://194.164.149.22/api/auth/validate-token/${token}`)
+    fetch(`http://localhost:8000/auth/validate-token/${token}`)
       .then(res => res.json())
       .then(data => {
         if (data.username) {
@@ -32,7 +32,7 @@ function ResetPassword() {
 
     setLoading(true);
     try {
-      const res = await fetch("http://194.164.149.22/api/auth/reset-password", {
+      const res = await fetch("http://localhost:8000/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, new_password: password })

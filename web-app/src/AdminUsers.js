@@ -106,7 +106,7 @@ function AdminUsers() {
   // Fetches only users in THIS admin's hierarchy
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("http://194.164.149.22/api/users/my-hierarchy", {
+      const res = await fetch("http://localhost:8000/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) { navigate("/"); return; }
@@ -140,7 +140,7 @@ return matchSearch && matchRole;
   // ─── Unit linkage fetches (Day 11) ──────────────────────────────────────
   useEffect(() => {
     if (inviteRole !== "Tenant") return;
-    fetch("http://194.164.149.22/api/properties", { headers: { Authorization: `Bearer ${token}` } })
+    fetch("http://localhost:8000/properties", { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => setInviteProperties(Array.isArray(data) ? data : []))
       .catch(() => setInviteProperties([]));
@@ -148,7 +148,7 @@ return matchSearch && matchRole;
 
   useEffect(() => {
     if (!invitePropertyId) { setInviteUnits([]); return; }
-    fetch(`http://194.164.149.22/api/properties/${invitePropertyId}/units`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`http://localhost:8000/properties/${invitePropertyId}/units`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => setInviteUnits(Array.isArray(data) ? data : []))
       .catch(() => setInviteUnits([]));
@@ -174,7 +174,7 @@ return matchSearch && matchRole;
     setInviting(true);
     setInviteErr("");
     try {
-      const res = await fetch("http://194.164.149.22/api/users/create", {
+      const res = await fetch("http://localhost:8000/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -236,7 +236,7 @@ return matchSearch && matchRole;
         body.units = unitsNum;
       }
       const res = await fetch(
-        `http://194.164.149.22/api/users/update/${editUser.username || editUser.user_id}`,
+        `http://localhost:8000/users/update/${editUser.username || editUser.user_id}`,
   {
     method: "PUT",
     headers: {
@@ -261,7 +261,7 @@ return matchSearch && matchRole;
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`http://194.164.149.22/api/users/delete/${deleteTarget.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/delete/${deleteTarget.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -278,7 +278,7 @@ return matchSearch && matchRole;
 
   const handleResendRegistration = async (user) => {
     try {
-      const res = await fetch(`http://194.164.149.22/api/users/resend-registration/${user.user_id}`, {
+      const res = await fetch(`http://localhost:8000/users/resend-registration/${user.user_id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });

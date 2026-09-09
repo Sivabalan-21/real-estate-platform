@@ -14,7 +14,7 @@ export default function UploadLogo() {
 
   // Validate token on load
   useEffect(() => {
-    fetch(`http://194.164.149.22/api/company/validate-logo-token/${token}`)
+    fetch(`http://localhost:8000/company/validate-logo-token/${token}`)
       .then(r => {
         if (!r.ok) throw new Error();
         setValidating(false);
@@ -32,7 +32,7 @@ export default function UploadLogo() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const res  = await fetch(`http://194.164.149.22/api/company/upload-logo-by-token/${token}`, {
+      const res  = await fetch(`http://localhost:8000/company/upload-logo-by-token/${token}`, {
         method: "POST",
         body:   formData,
       });

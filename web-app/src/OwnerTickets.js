@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 
-const API = "http://187.127.180.107";
+const API = "http://localhost:8000";
 
 const STATUS_STYLES = {
   open:                    { bg: "#fee2e2", color: "#991b1b", label: "Open" },

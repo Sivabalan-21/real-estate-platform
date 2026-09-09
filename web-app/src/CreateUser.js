@@ -47,7 +47,7 @@ function CreateUser() {
   useEffect(() => {
     if (!isTenant) return;
 
-    fetch("http://187.127.180.107/properties", {
+    fetch("http://localhost:8000/properties", {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
@@ -62,7 +62,7 @@ function CreateUser() {
     }
 
     setUnitsLoading(true);
-    fetch(`http://187.127.180.107/properties/${selectedProperty}/units`, {
+    fetch(`http://localhost:8000/properties/${selectedProperty}/units`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
@@ -106,7 +106,7 @@ function CreateUser() {
     };
 
     try {
-      const res = await fetch("http://187.127.180.107/users/create", {
+      const res = await fetch("http://localhost:8000/users/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
