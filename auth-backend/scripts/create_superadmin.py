@@ -8,7 +8,7 @@ from models import User, uuid_str
 
 USERNAME = "superadmin"
 EMAIL = "superadmin@local.dev"
-PASSWORD = "ChangeMe123!"
+PASSWORD = "Admin@1234"
 
 db = SessionLocal()
 
