@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 
-const API = "http://localhost:8000";
+const API = "http://187.127.180.107";
 
 const STATUS_STYLES = {
   open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
@@ -164,12 +164,31 @@ function MaintenanceDetail() {
           </div>
         )}
 
-        {/* Comments/notes system is Month 2 — this section exists now so the
-            tenant sees, from day one, that PM communication happens here
-            rather than by text message. */}
+        {/* Real status-change feed, backed by ticket.history. Replaces the
+            hardcoded "No updates yet" placeholder — full threaded PM
+            comments are still Month 2, but the status log already existed
+            server-side (record_ticket_history), so there's no reason to
+            show tenants a static string when this data was one field away. */}
         <div style={s.updatesSection}>
           <p style={s.metaLabel}>Updates from your PM</p>
-          <p style={s.updatesPlaceholder}>No updates yet</p>
+          {ticket.history && ticket.history.length > 0 ? (
+            <div style={s.historyList}>
+              {[...ticket.history].reverse().map((h, i) => {
+                const st = STATUS_STYLES[h.status] || { label: h.status };
+                return (
+                  <div key={i} style={s.historyRow}>
+                    <span style={s.historyDot} />
+                    <div>
+                      <p style={s.historyText}>Status changed to <strong>{st.label}</strong></p>
+                      <p style={s.historyTime}>{formatDateTime(h.changed_at)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p style={s.updatesPlaceholder}>No updates yet</p>
+          )}
         </div>
       </div>
     </div>
@@ -208,6 +227,11 @@ const s = {
 
   updatesSection: { marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9" },
   updatesPlaceholder: { fontSize: 13, color: "#94a3b8", fontStyle: "italic", margin: "6px 0 0" },
+  historyList:  { marginTop: 10, display: "flex", flexDirection: "column", gap: 12 },
+  historyRow:   { display: "flex", gap: 10, alignItems: "flex-start" },
+  historyDot:   { width: 8, height: 8, borderRadius: "50%", background: "#a5b4fc", marginTop: 6, flexShrink: 0 },
+  historyText:  { fontSize: 13, color: "#334155", margin: 0 },
+  historyTime:  { fontSize: 12, color: "#94a3b8", margin: "2px 0 0" },
 
   stepper:   { display: "flex", alignItems: "flex-start", margin: "16px 0 20px" },
   stepItem:  { display: "flex", flexDirection: "column", alignItems: "center", width: 60, flexShrink: 0 },

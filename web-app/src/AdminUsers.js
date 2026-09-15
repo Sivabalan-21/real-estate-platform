@@ -1,23 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Company Admin": ["Regional Manager", "Owner", "Tenant"],
-  "Regional Manager": ["Property Manager"],
-};
-const VISIBLE_ROLES_BY_CURRENT_ROLE = {
-  "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin": ["Regional Manager", "Owner", "Tenant"],
-  "Regional Manager": ["Property Manager"],
-};
-const ROLE_META = {
-  "Regional Manager":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
-  "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
-  "Tenant":           { color: "#10b981", bg: "#d1fae5", icon: "🏠" },
-  "Vendor":           { color: "#f59e0b", bg: "#fef3c7", icon: "🔧" },
-  "Owner":            { color: "#ec4899", bg: "#fce7f3", icon: "👑" },
-};
-
+import { ROLE_OPTIONS_BY_CURRENT_ROLE, ROLE_META } from "./roleConfig";
+const VISIBLE_ROLES_BY_CURRENT_ROLE = ROLE_OPTIONS_BY_CURRENT_ROLE;
 // ─── SHARED UI COMPONENTS ─────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (

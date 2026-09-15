@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { ROLE_OPTIONS_BY_CURRENT_ROLE as allowedRoles } from "./roleConfig";
 
 function CreateUser() {
   const location = useLocation();
@@ -11,12 +12,6 @@ function CreateUser() {
   const currentRole = localStorage.getItem("role");
   const token = localStorage.getItem("token");
 
-  const allowedRoles = {
-    "Super Admin": ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-    "Company Admin": ["Regional Manager", "Owner"],
-    "Regional Manager": ["Property Manager"],
-    "Property Manager": ["Tenant", "Vendor", "Owner"]
-  };
 
   // ✅ NEW: dynamic roles
   const roleOptions = allowedRoles[currentRole] || [];

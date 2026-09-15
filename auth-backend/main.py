@@ -855,7 +855,14 @@ def get_properties(
     if user.role in (ROLE_ADMIN, ROLE_COMPANY_ADMIN, ROLE_SUPER_ADMIN):
         props = db.query(Property).filter(Property.company_id == user.company_id).all()
     elif user.role == ROLE_PROPERTY_MANAGER:
-        props = db.query(Property).filter(Property.created_by == user.username).all()
+        assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+        props = (
+            db.query(Property)
+            .filter(Property.id.in_(assigned_property_ids), Property.company_id == user.company_id)
+            .all()
+            if assigned_property_ids
+            else []
+        )
     else:
         raise HTTPException(403, "Not authorized to view properties")
 
@@ -992,7 +999,7 @@ def create_unit(
     if not prop:
         raise HTTPException(404, "Property not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, prop.id):
         raise HTTPException(
             403,
             "You can only manage your own properties",
@@ -1057,7 +1064,7 @@ def get_units(
 
     if (
         user.role == ROLE_PROPERTY_MANAGER
-        and prop.created_by != user.username
+        and not _pm_can_manage_property(db, user.username, prop.id)
     ):
         raise HTTPException(
             403,
@@ -1109,7 +1116,7 @@ def update_unit(
     # Property Manager can update only their own properties
     if (
         user.role == ROLE_PROPERTY_MANAGER
-        and unit.property.created_by != user.username
+        and not _pm_can_manage_property(db, user.username, unit.property_id)
     ):
         raise HTTPException(
             403,
@@ -1159,7 +1166,7 @@ def delete_unit(
     # Property Manager restriction
     if (
         user.role == ROLE_PROPERTY_MANAGER
-        and unit.property.created_by != user.username
+        and not _pm_can_manage_property(db, user.username, unit.property_id)
     ):
         raise HTTPException(
             403,
@@ -1315,7 +1322,7 @@ def create_lease(
     if not unit:
         raise HTTPException(404, "Unit not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, unit.property_id):
         raise HTTPException(403, "You can only manage your own properties")
 
     # Check active lease existence directly, not just unit.status, per spec
@@ -1401,7 +1408,7 @@ def update_lease(
     if not lease:
         raise HTTPException(404, "Lease not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and lease.property.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, lease.property_id):
         raise HTTPException(403, "You can only manage your own properties")
 
     if data.tenant_username:
@@ -1439,7 +1446,7 @@ def get_property_leases(
     if not prop:
         raise HTTPException(404, "Property not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and prop.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, prop.id):
         raise HTTPException(403, "Not authorized")
 
     leases = (
@@ -1525,8 +1532,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "raised_by": ticket.created_by,
         "assigned_pm": ticket.assigned_pm,
         "assigned_vendor_id": ticket.assigned_vendor_id,
-        "rating": ticket.rating,
-        "pm_notes": ticket.pm_notes,
+                "rating": ticket.rating,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
         "last_update_at": ticket.updated_at,  # Day 16 spec's naming; same value as updated_at
@@ -1537,6 +1543,15 @@ def serialize_ticket(ticket: MaintenanceTicket):
         # page. serialize_attachment is defined further down this file; that's
         # fine, Python only resolves the name when this function actually runs.
         "attachments": [serialize_attachment(a) for a in ticket.attachments],
+        # Tenant-safe status-change feed (backs "Updates from your PM" on
+        # MaintenanceDetail.js). Deliberately just {status, changed_at} —
+        # no changed_by/note — since ticket.history can carry internal PM
+        # commentary that has no business reaching every caller of this
+        # function, tenants included.
+        "history": [
+            {"status": h.to_status, "changed_at": h.created_at}
+            for h in ticket.history
+        ],
     }
 
 
@@ -1830,6 +1845,13 @@ def _pm_assigned_property_ids(db: Session, pm_username: str):
     ]
 
 
+def _pm_can_manage_property(db: Session, pm_username: str, property_id: str) -> bool:
+    """True if the PM either created this property or is assigned to it
+    via PropertyAssignment. Use this instead of comparing created_by
+    directly for any PM-facing manage/edit/delete action."""
+    return property_id in _pm_assigned_property_ids(db, pm_username)
+
+
 @app.get("/pm/properties")
 def get_pm_properties(
     db: Session = Depends(get_db),
@@ -1911,7 +1933,23 @@ def get_pm_ticket_detail(
     if ticket.property_id not in assigned_property_ids:
         raise HTTPException(403, "Not authorized for this ticket")
 
+
+    return serialize_pm_ticket_detail(ticket, db)
+
+
+def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
+    """Shared by GET and PATCH /pm/tickets/{ticket_id} so both return the
+    same shape. Before this, PATCH returned bare serialize_ticket() with no
+    'tenant' key — the frontend's setTicket(patchResponse) then overwrote
+    the previously-fetched ticket (which did have 'tenant') with one that
+    didn't, making a correctly-populated Tenant panel flip to "No tenant on
+    record" the moment a PM changed status or saved a note, even though the
+    tenant data was never actually missing server-side."""
     data = serialize_ticket(ticket)
+    # pm_notes was removed from serialize_ticket's base output (it was
+    # leaking to every caller, tenant included). PM-facing views are the
+    # one place that should still see it.
+    data["pm_notes"] = ticket.pm_notes
 
     # Whoever raised the ticket, if they're a real platform user (usually
     # the tenant, occasionally a PM logging on the tenant's behalf) — the
@@ -1929,7 +1967,6 @@ def get_pm_ticket_detail(
         }
         if raised_by_user else None
     )
-
     return data
 
 
@@ -1972,7 +2009,7 @@ def update_pm_ticket(
 
     db.commit()
     db.refresh(ticket)
-    return serialize_ticket(ticket)
+    return serialize_pm_ticket_detail(ticket, db)
 
 
 # ---- Owner ticket view (Day 18) ----
@@ -2205,7 +2242,7 @@ async def upload_unit_photos(
     if not unit:
         raise HTTPException(404, "Unit not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, unit.property_id):
         raise HTTPException(403, "You can only manage your own properties")
 
     if len(files) > MAX_PHOTOS_PER_UPLOAD:
@@ -2286,7 +2323,7 @@ def delete_unit_photo(
     if not unit:
         raise HTTPException(404, "Unit not found")
 
-    if user.role == ROLE_PROPERTY_MANAGER and unit.property.created_by != user.username:
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(db, user.username, unit.property_id):
         raise HTTPException(403, "You can only manage your own properties")
 
     photo = db.query(UnitPhoto).filter(

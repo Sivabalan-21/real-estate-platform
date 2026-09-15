@@ -2,24 +2,8 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 // ─── ROLE CONFIG ────────────────────────────────────────────────────────────
-const SUPER_ADMIN_CREATE_ROLES = ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"];
-const ROLE_META = {
-  "Company Admin":    { color: "#7c3aed", bg: "#f3e8ff", icon: "◆" },
-  "Regional Manager":            { color: "#6366f1", bg: "#ede9fe", icon: "🛡️" },
-  "Property Manager": { color: "#0ea5e9", bg: "#e0f2fe", icon: "🏢" },
-  "Tenant":           { color: "#10b981", bg: "#d1fae5", icon: "🏠" },
-  "Vendor":           { color: "#f59e0b", bg: "#fef3c7", icon: "🔧" },
-  "Owner":            { color: "#ec4899", bg: "#fce7f3", icon: "👑" },
-};
-
-const ROLE_OPTIONS_BY_CURRENT_ROLE = {
-  "Super Admin":      ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin":    ["Regional Manager"],
-  "Regional Manager": ["Property Manager", "Tenant", "Owner", "Vendor"],
-  // A PM only ever creates the roles under them in the hierarchy — matches
-  // CreateUser.js's allowedRoles map and rbac.py's ROLE_HIERARCHY.
-  "Property Manager": ["Tenant", "Vendor", "Owner"],
-};
+import { ROLE_OPTIONS_BY_CURRENT_ROLE, ROLE_META } from "./roleConfig";
+const SUPER_ADMIN_CREATE_ROLES = ROLE_OPTIONS_BY_CURRENT_ROLE["Super Admin"];
 // Same set drives both "which roles can I filter the user list by" and
 // "which roles can I invite" — a PM should only ever see/manage the roles
 // they're actually responsible for, not the full platform role list.

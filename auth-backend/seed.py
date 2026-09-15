@@ -149,7 +149,7 @@ def seed(db):
     db.flush()
 
     # ---- Properties -------------------------------------------------
-    oak, created = get_or_create(
+        oak, created = get_or_create(
         db,
         Property,
         name="Oak Residences",
@@ -158,6 +158,7 @@ def seed(db):
             "address": "12 Oak Street",
             "description": "Mid-rise residential building",
             "status": "active",
+            "total_units": 5,
         },
     )
     created_summary.append(("Property", "Oak Residences", created))
@@ -171,6 +172,7 @@ def seed(db):
             "address": "88 Maple Avenue",
             "description": "High-rise mixed residential/commercial tower",
             "status": "active",
+            "total_units": 5,
         },
     )
     created_summary.append(("Property", "Maple Tower", created))
