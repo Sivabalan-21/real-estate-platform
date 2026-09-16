@@ -5,7 +5,8 @@ Run with:  pytest tests/test_tenant_creation.py -v
 """
 import uuid
 
-from flask import app
+
+
 
 from models import Property, User
 from rbac import ROLE_COMPANY_ADMIN
@@ -24,7 +25,15 @@ def make_property_and_unit(db_session, company, client, created_by, unit_number=
                  created_by=created_by, total_units=10)
     db_session.add(p)
     db_session.commit()
-    unit = client.post(f"/properties/{p.id}/units", json={"unit_number": unit_number, "type": "1BR"}).json()
+    response = client.post(
+        f"/properties/{p.id}/units",
+        json={"unit_number": unit_number, "type": "1BR"},
+    )
+
+    print("UNIT CREATE STATUS:", response.status_code)
+    print("UNIT CREATE RESPONSE:", response.json())
+
+    unit = response.json()
     return p, unit
 
 

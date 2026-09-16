@@ -213,3 +213,16 @@ window.
 Mobile/Safari responsive testing was not completed today due to time
 spent on the P1 fix and related debugging — recommend a follow-up pass
 before the demo if time allows.
+
+
+
+### [Fixed] seed.py crashed with IndentationError on --reset
+**Root cause:** Line 152 (`oak, created = get_or_create(`) had 8 extra
+spaces of indentation relative to the rest of the function body —
+likely a copy-paste artifact from an earlier edit (the total_units fix).
+Script was completely broken for anyone running --reset from a fresh
+checkout — would have blocked Day 22's regression re-test and any future
+developer's first setup.
+**Fix:** Corrected indentation via targeted sed edit on line 152.
+**Verified:** docker compose exec backend python seed.py --reset now
+completes cleanly, 27/27 records created, no errors.

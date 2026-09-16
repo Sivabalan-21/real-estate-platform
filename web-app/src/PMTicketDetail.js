@@ -4,11 +4,36 @@ import { useParams, useNavigate } from "react-router-dom";
 const API = "http://localhost:8000";
 
 const STATUS_STYLES = {
-  open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
-  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In Review" },
-  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
+  open: { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+  pm_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+  quote_requested: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
+  quote_received: { bg: "#e0e7ff", color: "#3730a3", label: "Quote Received" },
+  pending_owner_approval: { bg: "#ede9fe", color: "#5b21b6", label: "Pending Owner Approval" },
+  approved: { bg: "#dcfce7", color: "#166534", label: "Approved" },
   in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" },
-  closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+  completed: { bg: "#cffafe", color: "#155e75", label: "Completed" },
+  closed: { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+  rejected: { bg: "#fee2e2", color: "#991b1b", label: "Rejected" },
+  in_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+  scheduled: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
+};
+
+// Mirrors the canonical Day 24 lifecycle on the server. The server remains
+// authoritative; this only prevents the PM from being offered impossible
+// actions in the UI.
+const NEXT_STATUSES = {
+  open: ["pm_review"],
+  pm_review: ["quote_requested"],
+  quote_requested: ["quote_received"],
+  quote_received: ["pending_owner_approval"],
+  approved: ["in_progress"],
+  in_progress: ["completed"],
+  completed: ["closed"],
+  closed: [],
+  rejected: [],
+  // M1 records can continue without a data migration.
+  in_review: ["quote_requested"],
+  scheduled: ["quote_received"],
 };
 
 const CATEGORY_ICONS = {
@@ -34,6 +59,7 @@ function PMTicketDetail() {
 
   const [statusDraft, setStatusDraft] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -52,7 +78,7 @@ function PMTicketDetail() {
         return;
       }
       setTicket(data);
-      setStatusDraft(data.status);
+      setStatusDraft("");
       setNoteDraft(data.pm_notes || "");
     } catch {
       setError("Server error. Please try again.");
@@ -66,14 +92,24 @@ function PMTicketDetail() {
   const saveStatus = async (newStatus) => {
     setStatusDraft(newStatus);
     setSavingStatus(true);
+    setStatusError("");
     try {
-      const res = await fetch(`${API}/pm/tickets/${id}`, {
-        method: "PATCH",
+      const res = await fetch(`${API}/tickets/${id}/transition`, {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ new_status: newStatus }),
       });
       const data = await res.json();
-      if (res.ok) setTicket(data);
+      if (res.ok) {
+        setTicket(data);
+        setStatusDraft("");
+      } else {
+        setStatusError(data.detail || "Could not update status");
+        setStatusDraft("");
+      }
+    } catch {
+      setStatusError("Server error. Please try again.");
+      setStatusDraft("");
     } finally {
       setSavingStatus(false);
     }
@@ -189,19 +225,23 @@ function PMTicketDetail() {
         {/* Status update */}
         <div style={s.section}>
           <p style={s.sectionLabel}>Update Status</p>
-          <select
-            style={s.select}
-            value={statusDraft}
-            disabled={savingStatus}
-            onChange={e => saveStatus(e.target.value)}
-          >
-            <option value="open">Open</option>
-            <option value="in_review">In Review</option>
-            <option value="scheduled">Scheduled</option>
-            <option value="in_progress">In Progress</option>
-            <option value="closed">Closed</option>
-          </select>
+          {(NEXT_STATUSES[ticket.status] || []).length > 0 ? (
+            <select
+              style={s.select}
+              value={statusDraft}
+              disabled={savingStatus}
+              onChange={e => e.target.value && saveStatus(e.target.value)}
+            >
+              <option value="">Choose next status…</option>
+              {(NEXT_STATUSES[ticket.status] || []).map(status => (
+                <option key={status} value={status}>{STATUS_STYLES[status].label}</option>
+              ))}
+            </select>
+          ) : (
+            <p style={s.muted}>This ticket has no further PM transition available.</p>
+          )}
           {savingStatus && <span style={s.savingHint}>Saving…</span>}
+          {statusError && <p style={s.errorText}>{statusError}</p>}
         </div>
 
         {/* Internal note */}

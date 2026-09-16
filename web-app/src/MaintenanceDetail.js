@@ -4,11 +4,12 @@ import { useParams, useLocation, useNavigate } from "react-router-dom";
 const API = "http://187.127.180.107";
 
 const STATUS_STYLES = {
-  open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
-  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In review" },
-  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
-  in_progress: { bg: "#fef3c7", color: "#92400e", label: "In progress" },
-  closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+  open: { bg: "#fee2e2", color: "#991b1b", label: "Open" }, pm_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+  quote_requested: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" }, quote_received: { bg: "#e0e7ff", color: "#3730a3", label: "Quote Received" },
+  pending_owner_approval: { bg: "#ede9fe", color: "#5b21b6", label: "Pending Owner Approval" }, approved: { bg: "#dcfce7", color: "#166534", label: "Approved" },
+  in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" }, completed: { bg: "#cffafe", color: "#155e75", label: "Completed" },
+  closed: { bg: "#d1fae5", color: "#065f46", label: "Closed" }, rejected: { bg: "#fee2e2", color: "#991b1b", label: "Rejected" },
+  in_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" }, scheduled: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
 };
 
 const CATEGORY_ICONS = {
@@ -16,12 +17,14 @@ const CATEGORY_ICONS = {
   Drywall: "🧱", Pest: "🐛", Appliance: "🔌", Other: "🔧",
 };
 
-// Day 16: 5-stage visual stepper. Day 17 expanded the backend's status set
-// to the full 5 values a PM can actually set (open/in_review/scheduled/
-// in_progress/closed), so this is now a direct 1:1 mapping rather than an
-// approximation over a 3-value column.
-const STEPS = ["Submitted", "In Review", "Scheduled", "In Progress", "Done"];
-const STATUS_TO_STEP = { open: 0, in_review: 1, scheduled: 2, in_progress: 3, closed: 4 };
+// Day 24 lifecycle. Rejected is terminal and is displayed at the approval
+// stage; older M1 intermediates map to their nearest new-stage equivalents.
+const STEPS = ["Open", "PM Review", "Quote Requested", "Quote Received", "Owner Approval", "Approved", "In Progress", "Completed", "Closed"];
+const STATUS_TO_STEP = {
+  open: 0, pm_review: 1, quote_requested: 2, quote_received: 3,
+  pending_owner_approval: 4, approved: 5, in_progress: 6, completed: 7,
+  closed: 8, rejected: 4, in_review: 1, scheduled: 2,
+};
 
 function formatDateTime(dateStr) {
   if (!dateStr) return "—";
@@ -32,7 +35,7 @@ function formatDateTime(dateStr) {
 
 function StatusStepper({ status }) {
   const currentIndex = STATUS_TO_STEP[status] ?? 0;
-  const isDone = status === "closed";
+  const isDone = status === "closed" || status === "rejected";
 
   return (
     <div style={s.stepper}>

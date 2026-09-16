@@ -167,6 +167,11 @@ class MaintenanceTicketUpdate(BaseModel):
     note: Optional[str] = None  # optional TicketHistory note on a status change
 
 
+class TicketTransitionRequest(BaseModel):
+    new_status: str
+    note: Optional[str] = None
+
+
 class TicketCreate(BaseModel):
     """Day 14 richer create, used by POST /tickets. property_id lives in the
     body here rather than the URL path since this route isn't nested under

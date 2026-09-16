@@ -95,16 +95,47 @@ def regional_admin_user(db_session, company_a):
     return u
 
 
+import contextvars
+
+_test_current_user = contextvars.ContextVar("test_current_user", default=None)
+
+
+class _UserScopedClient(TestClient):
+    """A TestClient bound to one specific user, safe to use interleaved
+    with other _UserScopedClients on the same shared `app` — each request
+    sets the contextvar for just the duration of that call, instead of
+    mutating a single global override that the most-recently-created
+    client would silently steal from every earlier one."""
+
+    def __init__(self, app, user):
+        super().__init__(app)
+        self._user = user
+
+    def request(self, *args, **kwargs):
+        token = _test_current_user.set(self._user)
+        try:
+            return super().request(*args, **kwargs)
+        finally:
+            _test_current_user.reset(token)
+
+
 @pytest.fixture
 def client_factory(db_session):
     """client_factory(user) -> TestClient acting as that user."""
     def _get_db():
         yield db_session
 
+    def _current_user_override():
+        user = _test_current_user.get()
+        if user is None:
+            raise RuntimeError("No user set — request made outside a _UserScopedClient call")
+        return user
+
+    main.app.dependency_overrides[main.get_db] = _get_db
+    main.app.dependency_overrides[main.current_user] = _current_user_override
+
     def _factory(user):
-        main.app.dependency_overrides[main.get_db] = _get_db
-        main.app.dependency_overrides[main.current_user] = lambda: user
-        return TestClient(main.app)
+        return _UserScopedClient(main.app, user)
 
     yield _factory
     main.app.dependency_overrides.clear()

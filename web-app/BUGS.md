@@ -86,3 +86,9 @@ rendering the layout, redirecting to the user's own dashboard otherwise.
 Retested: Tenant navigating to /admin/users and /pm/properties now
 redirects cleanly to /tenant/dashboard. Regression-checked: all four
 roles' own dashboards still load normally.
+
+### [Note — not a bug, design consideration for M2] Usernames are globally unique, not per-company
+Confirmed expected behavior: User.username has a global unique constraint.
+Inviting "tenant1" in a second company failed because Acme already has
+that username. For a true multi-tenant SaaS, usernames are more typically
+scoped per-company. Worth a product decision before M2, not an M1 bug fix.

@@ -4,11 +4,12 @@ import { useNavigate } from "react-router-dom";
 const API = "http://localhost:8000";
 
 const STATUS_STYLES = {
-  open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
-  in_review:   { bg: "#fef3c7", color: "#92400e", label: "In Review" },
-  scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
-  in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" },
-  closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+  open: { bg: "#fee2e2", color: "#991b1b", label: "Open" }, pm_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+  quote_requested: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" }, quote_received: { bg: "#e0e7ff", color: "#3730a3", label: "Quote Received" },
+  pending_owner_approval: { bg: "#ede9fe", color: "#5b21b6", label: "Pending Owner Approval" }, approved: { bg: "#dcfce7", color: "#166534", label: "Approved" },
+  in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" }, completed: { bg: "#cffafe", color: "#155e75", label: "Completed" },
+  closed: { bg: "#d1fae5", color: "#065f46", label: "Closed" }, rejected: { bg: "#fee2e2", color: "#991b1b", label: "Rejected" },
+  in_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" }, scheduled: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
 };
 
 function formatDate(dateStr) {
@@ -86,10 +87,15 @@ function PMTickets() {
           <select style={s.select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
             <option value="open">Open</option>
-            <option value="in_review">In Review</option>
-            <option value="scheduled">Scheduled</option>
+            <option value="pm_review">PM Review</option>
+            <option value="quote_requested">Quote Requested</option>
+            <option value="quote_received">Quote Received</option>
+            <option value="pending_owner_approval">Pending Owner Approval</option>
+            <option value="approved">Approved</option>
             <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
             <option value="closed">Closed</option>
+            <option value="rejected">Rejected</option>
           </select>
         </div>
 

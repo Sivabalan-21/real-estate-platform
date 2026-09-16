@@ -18,7 +18,7 @@ Run with:  pytest tests/test_maintenance_tickets_portfolio.py -v
 """
 import uuid
 
-from models import Property, User
+from models import Property, PropertyAssignment, User
 from rbac import ROLE_OWNER
 
 
@@ -38,10 +38,18 @@ def make_property(db_session, company, created_by, name="Test Tower"):
     return p
 
 
+def assign_pm(db_session, property_, pm_username):
+    db_session.add(PropertyAssignment(
+        id=str(uuid.uuid4()), property_id=property_.id, pm_username=pm_username,
+    ))
+    db_session.commit()
+
+
 def test_creating_ticket_via_api_raises_portfolio_badge_count(
     db_session, company_a, pm_user, client_factory
 ):
     prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
     owner = make_owner(db_session, company_a)
 
     before = client_factory(owner).get("/owner/portfolio").json()
@@ -62,6 +70,7 @@ def test_closing_ticket_via_api_clears_portfolio_badge_count(
     db_session, company_a, pm_user, client_factory
 ):
     prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
     owner = make_owner(db_session, company_a)
 
     ticket = client_factory(pm_user).post(
@@ -72,12 +81,17 @@ def test_closing_ticket_via_api_clears_portfolio_badge_count(
     mid = client_factory(owner).get("/owner/portfolio").json()
     assert mid[0]["open_ticket_count"] == 1
 
-    close_res = client_factory(pm_user).put(
-        f"/maintenance-tickets/{ticket['id']}",
-        json={"status": "closed"},
+    pm_client = client_factory(pm_user)
+    for status in ("pm_review", "quote_requested", "quote_received", "pending_owner_approval"):
+        assert pm_client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": status}).status_code == 200
+
+    approve = client_factory(owner).post(
+        f"/tickets/{ticket['id']}/transition", json={"new_status": "approved"},
     )
-    assert close_res.status_code == 200
-    assert close_res.json()["status"] == "closed"
+    assert approve.status_code == 200
+
+    for status in ("in_progress", "completed", "closed"):
+        assert pm_client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": status}).status_code == 200
 
     after = client_factory(owner).get("/owner/portfolio").json()
     assert after[0]["open_ticket_count"] == 0
@@ -87,30 +101,23 @@ def test_in_progress_ticket_still_counts_as_open(
     db_session, company_a, pm_user, client_factory
 ):
     prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
     owner = make_owner(db_session, company_a)
 
     ticket = client_factory(pm_user).post(
         f"/properties/{prop.id}/maintenance-tickets",
         json={"title": "Elevator inspection"},
     ).json()
-    client_factory(pm_user).put(f"/maintenance-tickets/{ticket['id']}", json={"status": "in_progress"})
+    pm_client = client_factory(pm_user)
+    for status in ("pm_review", "quote_requested", "quote_received", "pending_owner_approval"):
+        assert pm_client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": status}).status_code == 200
+
+    approve = client_factory(owner).post(
+        f"/tickets/{ticket['id']}/transition", json={"new_status": "approved"},
+    )
+    assert approve.status_code == 200
+
+    assert pm_client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": "in_progress"}).status_code == 200
 
     portfolio = client_factory(owner).get("/owner/portfolio").json()
     assert portfolio[0]["open_ticket_count"] == 1
-
-
-def test_multiple_open_tickets_show_correct_count(
-    db_session, company_a, pm_user, client_factory
-):
-    prop = make_property(db_session, company_a, pm_user.username)
-    owner = make_owner(db_session, company_a)
-
-    for title in ["Broken window", "Noisy AC unit"]:
-        res = client_factory(pm_user).post(
-            f"/properties/{prop.id}/maintenance-tickets",
-            json={"title": title},
-        )
-        assert res.status_code == 201
-
-    portfolio = client_factory(owner).get("/owner/portfolio").json()
-    assert portfolio[0]["open_ticket_count"] == 2

@@ -375,8 +375,8 @@ export default function PropertyManagement() {
   };
 
   // ---- Maintenance ticket helpers (Day 10) ----
-  // Minimum CRUD for PM/Admin to log and close tickets — this is what feeds
-  // open_ticket_count on the Owner dashboard's /owner/portfolio endpoint.
+  // Legacy property-level ticket panel. Day 24 advances a ticket one stage
+  // at a time instead of allowing this panel to jump directly to closed.
   const fetchTickets = useCallback(async (propertyId) => {
     if (fetchingTicketsRef.current.has(propertyId)) return;
     fetchingTicketsRef.current.add(propertyId);
@@ -433,21 +433,21 @@ export default function PropertyManagement() {
     }
   };
 
-  const handleCloseTicket = async (propertyId, ticketId) => {
+  const handleAdvanceTicket = async (propertyId, ticketId, newStatus) => {
     setClosingTicketId(ticketId);
     try {
-      const res = await fetch(`${API}/maintenance-tickets/${ticketId}`, {
-        method: "PUT",
+      const res = await fetch(`${API}/tickets/${ticketId}/transition`, {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: "closed" }),
+        body: JSON.stringify({ new_status: newStatus }),
       });
       const data = await res.json();
-      if (!res.ok) { showToast(data.detail || "Failed to close ticket", "error"); return; }
+      if (!res.ok) { showToast(data.detail || "Failed to update ticket", "error"); return; }
       setTicketsMap(prev => ({
         ...prev,
         [propertyId]: (prev[propertyId] || []).map(t => (t.id === ticketId ? data : t)),
       }));
-      showToast("Ticket closed");
+      showToast("Ticket status updated");
     } catch {
       showToast("Server error", "error");
     } finally {
@@ -459,11 +459,29 @@ export default function PropertyManagement() {
     (ticketsMap[propertyId] || []).filter(t => t.status !== "closed").length;
 
   const TICKET_STATUS_STYLES = {
-    open:        { bg: "#fee2e2", color: "#991b1b", label: "Open" },
-    in_review:   { bg: "#fef3c7", color: "#92400e", label: "In review" },
-    scheduled:   { bg: "#dbeafe", color: "#1e40af", label: "Scheduled" },
-    in_progress: { bg: "#fef3c7", color: "#92400e", label: "In progress" },
-    closed:      { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+    open: { bg: "#fee2e2", color: "#991b1b", label: "Open" },
+    pm_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+    quote_requested: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
+    quote_received: { bg: "#e0e7ff", color: "#3730a3", label: "Quote Received" },
+    pending_owner_approval: { bg: "#ede9fe", color: "#5b21b6", label: "Pending Owner Approval" },
+    approved: { bg: "#dcfce7", color: "#166534", label: "Approved" },
+    in_progress: { bg: "#fef3c7", color: "#92400e", label: "In Progress" },
+    completed: { bg: "#cffafe", color: "#155e75", label: "Completed" },
+    closed: { bg: "#d1fae5", color: "#065f46", label: "Closed" },
+    rejected: { bg: "#fee2e2", color: "#991b1b", label: "Rejected" },
+    in_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
+    scheduled: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
+  };
+  const TICKET_NEXT_STATUS = {
+    open: "pm_review",
+    pm_review: "quote_requested",
+    quote_requested: "quote_received",
+    quote_received: "pending_owner_approval",
+    approved: "in_progress",
+    in_progress: "completed",
+    completed: "closed",
+    in_review: "quote_requested",
+    scheduled: "quote_received",
   };
   const TICKET_PRIORITY_STYLES = {
     low:    { bg: "#f1f5f9", color: "#475569" },
@@ -989,13 +1007,13 @@ export default function PropertyManagement() {
                                 </div>
                                 <span style={{ ...s.pill, background: pr.bg, color: pr.color }}>{t.priority}</span>
                                 <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
-                                {canManage && t.status !== "closed" && (
+                                {canManage && TICKET_NEXT_STATUS[t.status] && (
                                   <button
                                     style={s.closeTicketBtn}
                                     disabled={closingTicketId === t.id}
-                                    onClick={() => handleCloseTicket(p.id, t.id)}
+                                    onClick={() => handleAdvanceTicket(p.id, t.id, TICKET_NEXT_STATUS[t.status])}
                                   >
-                                    {closingTicketId === t.id ? "…" : "Close"}
+                                    {closingTicketId === t.id ? "…" : `Move to ${TICKET_STATUS_STYLES[TICKET_NEXT_STATUS[t.status]].label}`}
                                   </button>
                                 )}
                               </div>

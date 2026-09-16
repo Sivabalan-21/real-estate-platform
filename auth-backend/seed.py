@@ -149,7 +149,7 @@ def seed(db):
     db.flush()
 
     # ---- Properties -------------------------------------------------
-        oak, created = get_or_create(
+    oak, created = get_or_create(
         db,
         Property,
         name="Oak Residences",
