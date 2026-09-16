@@ -12,7 +12,7 @@ Run with:  pytest tests/test_tickets_day14.py -v
 """
 import uuid
 
-from models import Property, TicketHistory, User
+from models import Property, TicketHistory, User, PropertyAssignment
 from rbac import ROLE_TENANT
 
 
@@ -22,6 +22,13 @@ def make_property(db_session, company, created_by, name="Test Tower"):
     db_session.add(p)
     db_session.commit()
     return p
+
+
+def assign_pm(db_session, property_, pm_username):
+    db_session.add(PropertyAssignment(
+        id=str(uuid.uuid4()), property_id=property_.id, pm_username=pm_username,
+    ))
+    db_session.commit()
 
 
 def make_tenant(db_session, company, username="tenant_a"):
@@ -36,6 +43,7 @@ def test_post_tickets_as_tenant_creates_open_ticket_with_company_id(
     db_session, company_a, pm_user, client_factory
 ):
     prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
     tenant = make_tenant(db_session, company_a)
 
     res = client_factory(tenant).post(
@@ -102,20 +110,24 @@ def test_ticket_history_row_created_on_status_change_via_existing_put_route(
     db_session, company_a, pm_user, client_factory
 ):
     prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
     tenant = make_tenant(db_session, company_a)
 
     ticket = client_factory(tenant).post(
         "/tickets", json={"property_id": prop.id, "category": "Appliance"},
     ).json()
 
-    client_factory(pm_user).put(f"/maintenance-tickets/{ticket['id']}", json={"status": "closed"})
+    client = client_factory(pm_user)
+    for status in ("pm_review", "quote_requested", "quote_received"):
+        assert client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": status}).status_code == 200
+    assert client.put(f"/maintenance-tickets/{ticket['id']}", json={"status": "pending_owner_approval"}).status_code == 200
 
     history = db_session.query(TicketHistory).filter(TicketHistory.ticket_id == ticket["id"]).order_by(
         TicketHistory.created_at
     ).all()
-    assert len(history) == 2
-    assert history[1].from_status == "open"
-    assert history[1].to_status == "closed"
+    assert len(history) == 5
+    assert history[-1].from_status == "quote_received"
+    assert history[-1].to_status == "pending_owner_approval"
 
 
 # ---- Day 15: tenant maintenance request creation, with photo attachments ----

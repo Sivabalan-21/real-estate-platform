@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from jose import JWTError, jwt
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
@@ -33,7 +34,10 @@ from schemas import (
     MaintenanceTicketCreate,
     MaintenanceTicketUpdate,
     TicketCreate,
+    TicketTransitionRequest,
 )
+from services.ticket_service import transition_ticket
+from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
 from services.user_service import (
     backfill_companies,
     complete_registration,
@@ -858,10 +862,14 @@ def get_properties(
         assigned_property_ids = _pm_assigned_property_ids(db, user.username)
         props = (
             db.query(Property)
-            .filter(Property.id.in_(assigned_property_ids), Property.company_id == user.company_id)
+            .filter(
+                Property.company_id == user.company_id,
+                or_(
+                    Property.id.in_(assigned_property_ids),
+                    Property.created_by == user.username,
+                ),
+            )
             .all()
-            if assigned_property_ids
-            else []
         )
     else:
         raise HTTPException(403, "Not authorized to view properties")
@@ -1555,7 +1563,9 @@ def serialize_ticket(ticket: MaintenanceTicket):
     }
 
 
-TICKET_STATUSES = ("open", "in_review", "scheduled", "in_progress", "closed")
+# Compatibility alias used by the M1 list/filter endpoints.  The canonical
+# lifecycle and role-based transition rules live in ticket_states.py.
+TICKET_STATUSES = TICKET_STATUS_FILTERS
 TICKET_PRIORITIES = ("low", "normal", "high", "urgent")
 TICKET_CATEGORIES = (
     "Plumbing", "Electrical", "HVAC", "Roof", "Drywall", "Pest", "Appliance", "Other",
@@ -1570,6 +1580,25 @@ def record_ticket_history(db: Session, ticket: MaintenanceTicket, from_status, t
         changed_by=changed_by,
         note=note,
     ))
+
+
+def serialize_ticket_history(history: TicketHistory):
+    """Full audit representation used by the ticket detail endpoint.
+
+    `status`/`changed_at` aliases retain the M1 tenant timeline contract
+    while the canonical fields expose the complete Day 24 audit record.
+    """
+    return {
+        "id": history.id,
+        "ticket_id": history.ticket_id,
+        "from_status": history.from_status,
+        "to_status": history.to_status,
+        "changed_by": history.changed_by,
+        "note": history.note,
+        "created_at": history.created_at,
+        "status": history.to_status,
+        "changed_at": history.created_at,
+    }
 
 
 @app.post("/properties/{property_id}/maintenance-tickets", status_code=201)
@@ -1673,6 +1702,11 @@ def update_maintenance_ticket(
     if not ticket:
         raise HTTPException(404, "Ticket not found")
 
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(
+        db, user.username, ticket.property_id
+    ):
+        raise HTTPException(403, "Not authorized for this ticket")
+
     if data.title is not None:
         ticket.title = data.title
     if data.description is not None:
@@ -1692,13 +1726,7 @@ def update_maintenance_ticket(
     if data.rating is not None:
         ticket.rating = data.rating
     if data.status is not None:
-        if data.status not in TICKET_STATUSES:
-            raise HTTPException(400, f"Invalid status. Must be one of {TICKET_STATUSES}")
-        if data.status != ticket.status:
-            record_ticket_history(db, ticket, from_status=ticket.status, to_status=data.status,
-                                   changed_by=user.username, note=data.note)
-        ticket.status = data.status
-        ticket.closed_at = datetime.utcnow() if data.status == "closed" else None
+        transition_ticket(db, ticket, data.status, user, data.note)
 
     ticket.updated_at = datetime.utcnow()
     db.commit()
@@ -1803,7 +1831,48 @@ def get_ticket(
         raise HTTPException(404, "Ticket not found")
     if ticket.company_id != user.company_id:
         raise HTTPException(403, "Not authorized")
-    return serialize_ticket(ticket)
+    if user.role == ROLE_TENANT and ticket.created_by != user.username:
+        raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(
+        db, user.username, ticket.property_id
+    ):
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    data = serialize_ticket(ticket)
+    # Tenants keep the minimal {status, changed_at} history serialize_ticket()
+    # already set — internal audit fields (changed_by, PM notes) aren't
+    # tenant-facing. Everyone else gets the full record.
+    if user.role != ROLE_TENANT:
+        data["history"] = [serialize_ticket_history(h) for h in ticket.history]
+    return data
+
+
+@app.post("/tickets/{ticket_id}/transition")
+def transition_ticket_endpoint(
+    ticket_id: str,
+    data: TicketTransitionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Advance a ticket exactly one legal Day 24 lifecycle stage."""
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_TENANT:
+        raise HTTPException(403, "Tenants cannot transition tickets")
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(
+        db, user.username, ticket.property_id
+    ):
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    transition_ticket(db, ticket, data.new_status, user, data.note)
+    db.commit()
+    db.refresh(ticket)
+    data_out = serialize_ticket(ticket)
+    data_out["history"] = [serialize_ticket_history(h) for h in ticket.history]
+    return data_out
 
 
 @app.get("/properties/{property_id}/tickets")
@@ -1849,7 +1918,10 @@ def _pm_can_manage_property(db: Session, pm_username: str, property_id: str) -> 
     """True if the PM either created this property or is assigned to it
     via PropertyAssignment. Use this instead of comparing created_by
     directly for any PM-facing manage/edit/delete action."""
-    return property_id in _pm_assigned_property_ids(db, pm_username)
+    if property_id in _pm_assigned_property_ids(db, pm_username):
+        return True
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    return bool(prop and prop.created_by == pm_username)
 
 
 @app.get("/pm/properties")
@@ -1977,10 +2049,11 @@ def update_pm_ticket(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    """PM-only: update status and/or the internal pm_notes field. A basic
-    dropdown for now — the enforced open -> in_progress -> closed state
-    machine is Day 24 per the spec, so any status in TICKET_STATUSES is
-    accepted here without transition validation."""
+    """PM-only update for an assigned property.
+
+    Status changes are delegated to the Day 24 state machine; PM notes may
+    still be updated independently.
+    """
     if user.role != ROLE_PROPERTY_MANAGER:
         raise HTTPException(403, "Not authorized")
 
@@ -1994,15 +2067,7 @@ def update_pm_ticket(
 
     if "status" in data:
         new_status = data["status"]
-        if new_status not in TICKET_STATUSES:
-            raise HTTPException(400, f"status must be one of {TICKET_STATUSES}")
-        if new_status != ticket.status:
-            record_ticket_history(db, ticket, ticket.status, new_status, user.username)
-            ticket.status = new_status
-            if new_status == "closed":
-                ticket.closed_at = datetime.utcnow()
-            elif ticket.closed_at:
-                ticket.closed_at = None  # reopened
+        transition_ticket(db, ticket, new_status, user, data.get("note"))
 
     if "pm_notes" in data:
         ticket.pm_notes = (data.get("pm_notes") or "").strip() or None
@@ -2021,7 +2086,8 @@ def update_pm_ticket(
 # now so that day only has to add the action column, not the view or
 # filtering logic.
 
-OWNER_APPROVAL_STATUS = "pending_owner_approval"
+# Now a real, reachable state — see ticket_states.PENDING_OWNER_APPROVAL.
+OWNER_APPROVAL_STATUS = PENDING_OWNER_APPROVAL
 
 
 def serialize_owner_ticket(ticket: MaintenanceTicket):
@@ -2058,7 +2124,7 @@ def get_owner_tickets(
         if not prop:
             raise HTTPException(404, "Property not found")
 
-    valid_statuses = TICKET_STATUSES + (OWNER_APPROVAL_STATUS,)
+    valid_statuses = TICKET_STATUSES
     if status and status not in valid_statuses:
         raise HTTPException(400, f"status must be one of {valid_statuses}")
 

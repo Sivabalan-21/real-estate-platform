@@ -165,14 +165,14 @@ def test_status_update_persists(db_session, company_a, client_factory):
     ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
 
     client = client_factory(pm)
-    patch_res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "in_progress"})
+    patch_res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "pm_review"})
     assert patch_res.status_code == 200
-    assert patch_res.json()["status"] == "in_progress"
+    assert patch_res.json()["status"] == "pm_review"
 
     # Simulate a page reload: fetch again from scratch.
     reload_res = client.get(f"/pm/tickets/{ticket.id}")
     assert reload_res.status_code == 200
-    assert reload_res.json()["status"] == "in_progress"
+    assert reload_res.json()["status"] == "pm_review"
 
 
 def test_status_update_open_to_in_review_persists(db_session, company_a, client_factory):
@@ -187,13 +187,13 @@ def test_status_update_open_to_in_review_persists(db_session, company_a, client_
     ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
 
     client = client_factory(pm)
-    patch_res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "in_review"})
+    patch_res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "pm_review"})
     assert patch_res.status_code == 200
-    assert patch_res.json()["status"] == "in_review"
+    assert patch_res.json()["status"] == "pm_review"
 
     reload_res = client.get(f"/pm/tickets/{ticket.id}")
     assert reload_res.status_code == 200
-    assert reload_res.json()["status"] == "in_review"
+    assert reload_res.json()["status"] == "pm_review"
 
 
 def test_status_update_scheduled_is_valid(db_session, company_a, client_factory):
@@ -201,12 +201,12 @@ def test_status_update_scheduled_is_valid(db_session, company_a, client_factory)
     prop = make_property(db_session, company_a)
     unit = make_unit(db_session, prop)
     assign_pm(db_session, prop, pm.username)
-    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="pm_review")
 
     client = client_factory(pm)
-    res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "scheduled"})
+    res = client.patch(f"/pm/tickets/{ticket.id}", json={"status": "quote_requested"})
     assert res.status_code == 200
-    assert res.json()["status"] == "scheduled"
+    assert res.json()["status"] == "quote_requested"
 
 
 def test_pm_can_add_note(db_session, company_a, client_factory):
