@@ -40,7 +40,7 @@ function OwnerTickets() {
   const [openCount, setOpenCount] = useState(0);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [properties, setProperties] = useState([]);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(location.state?.status || "");
   // Preset from OwnerPropertyDetail's "View tickets for this property" link
   // (passed via navigate state) so that click actually lands filtered,
   // rather than on the full unfiltered list.
@@ -112,6 +112,7 @@ function OwnerTickets() {
           <label style={s.filterLabel}>Status</label>
           <select style={s.select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">Open + In Progress (default)</option>
+            <option value="active">All except Closed</option>
             <option value="open">Open</option>
             <option value="pm_review">PM Review</option>
             <option value="quote_requested">Quote Requested</option>

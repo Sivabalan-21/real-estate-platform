@@ -2125,7 +2125,12 @@ def get_owner_tickets(
             raise HTTPException(404, "Property not found")
 
     valid_statuses = TICKET_STATUSES
-    if status and status not in valid_statuses:
+    # "active" is a synthetic filter value, not a real ticket status — it
+    # means "everything except closed", matching how open_ticket_count
+    # below is already computed. Lets links like "view tickets for this
+    # property" show everything the badge counted, not just Open/In
+    # Progress.
+    if status and status != "active" and status not in valid_statuses:
         raise HTTPException(400, f"status must be one of {valid_statuses}")
 
     if category and category not in TICKET_CATEGORIES:
@@ -2141,7 +2146,9 @@ def get_owner_tickets(
     if category:
         query = query.filter(MaintenanceTicket.category == category)
 
-    if status:
+    if status == "active":
+        query = query.filter(MaintenanceTicket.status != "closed")
+    elif status:
         # Explicit status wins over the default Open/In-Progress view.
         query = query.filter(MaintenanceTicket.status == status)
     else:

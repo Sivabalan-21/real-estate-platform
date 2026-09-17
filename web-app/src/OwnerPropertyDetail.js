@@ -106,7 +106,7 @@ function OwnerPropertyDetail() {
 
         <button
           style={s.ticketsBtn}
-          onClick={() => navigate("/owner/tickets", { state: { propertyId: property.id } })}
+          onClick={() => navigate("/owner/tickets", { state: { propertyId: property.id, status: "active" } })}
         >
           View tickets for this property →
         </button>
