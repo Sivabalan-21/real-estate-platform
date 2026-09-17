@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const API = "http://localhost:8000";
 
@@ -35,6 +35,7 @@ function StatusPill({ status }) {
 function OwnerTickets() {
   const token = localStorage.getItem("token");
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [tickets, setTickets] = useState([]);
   const [openCount, setOpenCount] = useState(0);
@@ -162,6 +163,7 @@ function OwnerTickets() {
           <table style={s.table}>
             <thead>
               <tr>
+                <th style={s.th}>Ticket</th>
                 <th style={s.th}>Property</th>
                 <th style={s.th}>Unit</th>
                 <th style={s.th}>Category</th>
@@ -169,25 +171,42 @@ function OwnerTickets() {
                 <th style={s.th}>PM Assigned</th>
                 <th style={s.th}>Created</th>
                 <th style={s.th}>Quote Amount</th>
+                <th style={s.th}></th>
               </tr>
             </thead>
             <tbody>
-              {tickets.map(t => (
-                <tr key={t.id} style={s.tr}>
-                  <td style={s.td}>{t.property_name || "—"}</td>
-                  <td style={s.td}>{t.unit_number || "—"}</td>
-                  <td style={s.td}>{t.category || "—"}</td>
-                  <td style={s.td}>
-                    <StatusPill status={t.status} />
-                    {t.approval_required && (
-                      <span style={s.approvalBadge}>Approval Required</span>
-                    )}
-                  </td>
-                  <td style={s.td}>{t.assigned_pm_name || t.assigned_pm || "Unassigned"}</td>
-                  <td style={s.td}>{formatDate(t.created_at)}</td>
-                  <td style={s.td}>{t.quote_amount != null ? t.quote_amount : "—"}</td>
-                </tr>
-              ))}
+              {tickets.map(t => {
+                // Only pending-approval tickets are actionable for the owner
+                // today — clicking those takes them straight to the review
+                // screen. Everything else has nowhere useful to go yet
+                // (no /owner/tickets/:id detail page), so the row stays inert
+                // rather than navigating somewhere that looks broken.
+                const clickable = t.approval_required;
+                return (
+                  <tr
+                    key={t.id}
+                    style={{ ...s.tr, ...(clickable ? s.trClickable : {}) }}
+                    onClick={clickable ? () => navigate("/owner/approvals", { state: { ticketId: t.id } }) : undefined}
+                    onMouseEnter={clickable ? e => { e.currentTarget.style.background = "#f8fafc"; } : undefined}
+                    onMouseLeave={clickable ? e => { e.currentTarget.style.background = "transparent"; } : undefined}
+                  >
+                    <td style={s.td}><span style={s.ticketRef}>#{t.id.slice(-6).toUpperCase()}</span></td>
+                    <td style={s.td}>{t.property_name || "—"}</td>
+                    <td style={s.td}>{t.unit_number || "—"}</td>
+                    <td style={s.td}>{t.category || "—"}</td>
+                    <td style={s.td}>
+                      <StatusPill status={t.status} />
+                      {t.approval_required && (
+                        <span style={s.approvalBadge}>Approval Required</span>
+                      )}
+                    </td>
+                    <td style={s.td}>{t.assigned_pm_name || t.assigned_pm || "Unassigned"}</td>
+                    <td style={s.td}>{formatDate(t.created_at)}</td>
+                    <td style={s.td}>{t.quote_amount != null ? t.quote_amount : "—"}</td>
+                    <td style={s.td}>{clickable && <span style={s.reviewLink}>Review →</span>}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -222,11 +241,14 @@ const s = {
   tableWrap: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden" },
   table:     { width: "100%", borderCollapse: "collapse", fontSize: 13 },
   th:        { textAlign: "left", padding: "12px 16px", background: "#f8fafc", color: "#64748b", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: "1px solid #e2e8f0" },
-  tr:        { borderBottom: "1px solid #f1f5f9" },
-  td:        { padding: "12px 16px", color: "#334155", fontWeight: 500 },
+  tr:          { borderBottom: "1px solid #f1f5f9" },
+  trClickable: { cursor: "pointer", transition: "background 0.12s" },
+  td:          { padding: "12px 16px", color: "#334155", fontWeight: 500 },
 
+  ticketRef:     { fontFamily: "monospace", fontSize: 12, color: "#64748b" },
   pill:          { fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 20, display: "inline-block" },
   approvalBadge: { marginLeft: 8, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, display: "inline-block", background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" },
+  reviewLink:    { color: "#6366f1", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" },
 };
 
 export default OwnerTickets;
