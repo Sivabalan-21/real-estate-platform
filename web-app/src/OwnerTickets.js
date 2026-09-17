@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 
 const API = "http://localhost:8000";
 
@@ -33,13 +34,17 @@ function StatusPill({ status }) {
 
 function OwnerTickets() {
   const token = localStorage.getItem("token");
+  const location = useLocation();
 
   const [tickets, setTickets] = useState([]);
   const [openCount, setOpenCount] = useState(0);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [properties, setProperties] = useState([]);
   const [statusFilter, setStatusFilter] = useState("");
-  const [propertyFilter, setPropertyFilter] = useState("");
+  // Preset from OwnerPropertyDetail's "View tickets for this property" link
+  // (passed via navigate state) so that click actually lands filtered,
+  // rather than on the full unfiltered list.
+  const [propertyFilter, setPropertyFilter] = useState(location.state?.propertyId || "");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

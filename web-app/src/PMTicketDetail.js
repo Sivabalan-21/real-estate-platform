@@ -18,22 +18,30 @@ const STATUS_STYLES = {
   scheduled: { bg: "#dbeafe", color: "#1e40af", label: "Quote Requested" },
 };
 
-// Mirrors the canonical Day 24 lifecycle on the server. The server remains
-// authoritative; this only prevents the PM from being offered impossible
-// actions in the UI.
-const NEXT_STATUSES = {
-  open: ["pm_review"],
-  pm_review: ["quote_requested"],
-  quote_requested: ["quote_received"],
-  quote_received: ["pending_owner_approval"],
-  approved: ["in_progress"],
-  in_progress: ["completed"],
-  completed: ["closed"],
-  closed: [],
-  rejected: [],
-  // M1 records can continue without a data migration.
-  in_review: ["quote_requested"],
-  scheduled: ["quote_received"],
+// Read-only 9-step overview of the Day 24 lifecycle. Mirrors the tenant
+// view's StatusStepper (MaintenanceDetail.js) so PMs and tenants see the
+// same shape. "rejected" is terminal and shown parked at the Owner
+// Approval step, same as the tenant view.
+const STEPS = ["Open", "PM Review", "Quote Requested", "Quote Received", "Owner Approval", "Approved", "In Progress", "Completed", "Closed"];
+const STATUS_TO_STEP = {
+  open: 0, pm_review: 1, quote_requested: 2, quote_received: 3,
+  pending_owner_approval: 4, approved: 5, in_progress: 6, completed: 7,
+  closed: 8, rejected: 4, in_review: 1, scheduled: 2,
+};
+
+// Human-readable PM actions, one per legal forward transition out of the
+// current status. Deliberately does NOT include quote_requested ->
+// quote_received: that move is driven by the (separate) vendor-quote
+// feature calling transition_ticket() directly, not by a PM button here.
+// The server (ticket_states.py ALLOWED_TRANSITIONS) remains authoritative;
+// this list only decides which buttons a PM is offered.
+const TICKET_ACTIONS = {
+  open: [{ to: "pm_review", label: "Start Review" }],
+  pm_review: [{ to: "quote_requested", label: "Request Quote from Vendor" }],
+  quote_received: [{ to: "pending_owner_approval", label: "Submit to Owner for Approval" }],
+  approved: [{ to: "in_progress", label: "Begin Work" }],
+  in_progress: [{ to: "completed", label: "Mark Completed" }],
+  completed: [{ to: "closed", label: "Close Ticket" }],
 };
 
 const CATEGORY_ICONS = {
@@ -48,6 +56,73 @@ function formatDateTime(dateStr) {
   return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+function StatusStepper({ status }) {
+  const currentIndex = STATUS_TO_STEP[status] ?? 0;
+  const isDone = status === "closed" || status === "rejected";
+
+  return (
+    <div style={s.stepper}>
+      {STEPS.map((label, i) => {
+        const completed = isDone || i < currentIndex;
+        const current = !isDone && i === currentIndex;
+        const dotStyle = completed
+          ? s.stepDotDone
+          : current
+          ? s.stepDotCurrent
+          : s.stepDotUpcoming;
+        return (
+          <React.Fragment key={label}>
+            {i > 0 && (
+              <div style={{ ...s.stepLine, background: completed || current ? "#10b981" : "#e2e8f0" }} />
+            )}
+            <div style={s.stepItem}>
+              <div style={dotStyle}>{completed ? "✓" : i + 1}</div>
+              <span style={{ ...s.stepLabel, ...(current ? s.stepLabelCurrent : {}) }}>{label}</span>
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+// Confirms one transition, with an optional note that becomes the
+// TicketHistory audit row (this.note is what a PM would point to in a
+// dispute, per the task's "Big Picture" rationale).
+function TransitionModal({ action, submitting, error, onCancel, onConfirm }) {
+  const [note, setNote] = useState("");
+
+  return (
+    <div style={s.modalOverlay} onClick={submitting ? undefined : onCancel}>
+      <div style={s.modalCard} onClick={e => e.stopPropagation()}>
+        <p style={s.modalTitle}>{action.label}</p>
+        <p style={s.modalSub}>
+          This moves the ticket to <strong>{STATUS_STYLES[action.to]?.label || action.to}</strong>.
+        </p>
+        <label style={s.modalLabel}>Add note (optional)</label>
+        <textarea
+          style={s.textarea}
+          rows={3}
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          placeholder="e.g. Tenant confirmed issue still present…"
+          disabled={submitting}
+          autoFocus
+        />
+        {error && <p style={s.errorText}>{error}</p>}
+        <div style={s.modalActions}>
+          <button style={s.modalCancelBtn} onClick={onCancel} disabled={submitting}>
+            Cancel
+          </button>
+          <button style={s.modalConfirmBtn} onClick={() => onConfirm(note)} disabled={submitting}>
+            {submitting ? "Saving…" : "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PMTicketDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -57,9 +132,10 @@ function PMTicketDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [statusDraft, setStatusDraft] = useState("");
-  const [savingStatus, setSavingStatus] = useState(false);
-  const [statusError, setStatusError] = useState("");
+  // Which action is currently open in the confirm modal (or null).
+  const [pendingAction, setPendingAction] = useState(null);
+  const [transitioning, setTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState("");
 
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -78,7 +154,6 @@ function PMTicketDetail() {
         return;
       }
       setTicket(data);
-      setStatusDraft("");
       setNoteDraft(data.pm_notes || "");
     } catch {
       setError("Server error. Please try again.");
@@ -89,29 +164,27 @@ function PMTicketDetail() {
 
   useEffect(() => { fetchTicket(); }, [fetchTicket]);
 
-  const saveStatus = async (newStatus) => {
-    setStatusDraft(newStatus);
-    setSavingStatus(true);
-    setStatusError("");
+  const confirmTransition = async (note) => {
+    if (!pendingAction) return;
+    setTransitioning(true);
+    setTransitionError("");
     try {
       const res = await fetch(`${API}/tickets/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ new_status: newStatus }),
+        body: JSON.stringify({ new_status: pendingAction.to, note: note || null }),
       });
       const data = await res.json();
       if (res.ok) {
         setTicket(data);
-        setStatusDraft("");
+        setPendingAction(null);
       } else {
-        setStatusError(data.detail || "Could not update status");
-        setStatusDraft("");
+        setTransitionError(data.detail || "Could not update status");
       }
     } catch {
-      setStatusError("Server error. Please try again.");
-      setStatusDraft("");
+      setTransitionError("Server error. Please try again.");
     } finally {
-      setSavingStatus(false);
+      setTransitioning(false);
     }
   };
 
@@ -149,6 +222,8 @@ function PMTicketDetail() {
   if (!ticket) return null;
 
   const st = STATUS_STYLES[ticket.status] || { bg: "#f1f5f9", color: "#475569", label: ticket.status };
+  const actions = TICKET_ACTIONS[ticket.status] || [];
+  const history = ticket.history || [];
 
   return (
     <div style={s.page}>
@@ -168,6 +243,8 @@ function PMTicketDetail() {
           </div>
           <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>
         </div>
+
+        <StatusStepper status={ticket.status} />
 
         {ticket.description && <p style={s.description}>{ticket.description}</p>}
 
@@ -222,26 +299,29 @@ function PMTicketDetail() {
           </div>
         )}
 
-        {/* Status update */}
+        {/* Contextual actions — replaces the generic status dropdown */}
         <div style={s.section}>
-          <p style={s.sectionLabel}>Update Status</p>
-          {(NEXT_STATUSES[ticket.status] || []).length > 0 ? (
-            <select
-              style={s.select}
-              value={statusDraft}
-              disabled={savingStatus}
-              onChange={e => e.target.value && saveStatus(e.target.value)}
-            >
-              <option value="">Choose next status…</option>
-              {(NEXT_STATUSES[ticket.status] || []).map(status => (
-                <option key={status} value={status}>{STATUS_STYLES[status].label}</option>
+          <p style={s.sectionLabel}>Actions</p>
+          {actions.length > 0 ? (
+            <div style={s.actionRow}>
+              {actions.map(action => (
+                <button
+                  key={action.to}
+                  style={s.actionBtn}
+                  onClick={() => { setTransitionError(""); setPendingAction(action); }}
+                >
+                  {action.label}
+                </button>
               ))}
-            </select>
+            </div>
+          ) : ticket.status === "quote_requested" ? (
+            <p style={s.muted}>Waiting on the vendor quote before this can move forward.</p>
+          ) : ticket.status === "pending_owner_approval" ? (
+            <p style={s.muted}>Waiting on the owner's decision.</p>
           ) : (
-            <p style={s.muted}>This ticket has no further PM transition available.</p>
+            <p style={s.muted}>This ticket has no further PM action available.</p>
           )}
-          {savingStatus && <span style={s.savingHint}>Saving…</span>}
-          {statusError && <p style={s.errorText}>{statusError}</p>}
+          {transitionError && !pendingAction && <p style={s.errorText}>{transitionError}</p>}
         </div>
 
         {/* Internal note */}
@@ -262,7 +342,43 @@ function PMTicketDetail() {
             {noteSaved && <span style={s.savedHint}>✓ Saved</span>}
           </div>
         </div>
+
+        {/* Ticket history timeline */}
+        <div style={s.section}>
+          <p style={s.sectionLabel}>History</p>
+          {history.length > 0 ? (
+            <div style={s.historyList}>
+              {[...history].reverse().map((h, i) => {
+                const toSt = STATUS_STYLES[h.to_status] || { label: h.to_status };
+                return (
+                  <div key={h.id ?? i} style={s.historyRow}>
+                    <span style={s.historyDot} />
+                    <div>
+                      <p style={s.historyText}>
+                        {formatDateTime(h.created_at)} · {h.changed_by || "System"} moved to{" "}
+                        <strong>{toSt.label}</strong>
+                        {h.note ? `: ${h.note}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p style={s.muted}>No transitions yet.</p>
+          )}
+        </div>
       </div>
+
+      {pendingAction && (
+        <TransitionModal
+          action={pendingAction}
+          submitting={transitioning}
+          error={transitionError}
+          onCancel={() => { if (!transitioning) { setPendingAction(null); setTransitionError(""); } }}
+          onConfirm={confirmTransition}
+        />
+      )}
     </div>
   );
 }
@@ -300,13 +416,47 @@ const s = {
   photoRow:  { display: "flex", gap: 10, flexWrap: "wrap" },
   photoThumb:{ width: 80, height: 80, borderRadius: 10, objectFit: "cover", border: "1px solid #e2e8f0" },
 
-  select:      { padding: "9px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#0f172a" },
-  savingHint:  { fontSize: 12, color: "#94a3b8", marginLeft: 10 },
+  actionRow: { display: "flex", gap: 10, flexWrap: "wrap" },
+  actionBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 
   textarea:    { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", resize: "vertical" },
   noteActions: { display: "flex", alignItems: "center", gap: 12, marginTop: 10 },
   saveNoteBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   savedHint:   { fontSize: 12, color: "#059669", fontWeight: 600 },
+
+  historyList:  { marginTop: 4, display: "flex", flexDirection: "column", gap: 12 },
+  historyRow:   { display: "flex", gap: 10, alignItems: "flex-start" },
+  historyDot:   { width: 8, height: 8, borderRadius: "50%", background: "#a5b4fc", marginTop: 6, flexShrink: 0 },
+  historyText:  { fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.5 },
+
+  stepper:   { display: "flex", alignItems: "flex-start", margin: "16px 0 20px" },
+  stepItem:  { display: "flex", flexDirection: "column", alignItems: "center", width: 60, flexShrink: 0 },
+  stepLine:  { height: 2, flex: 1, marginTop: 13, minWidth: 8 },
+  stepLabel: { fontSize: 9, color: "#94a3b8", marginTop: 6, textAlign: "center", lineHeight: 1.2, fontWeight: 600 },
+  stepLabelCurrent: { color: "#92400e" },
+  stepDotBase: {
+    width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center",
+    justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0,
+  },
+  get stepDotDone() { return { ...this.stepDotBase, background: "#10b981", color: "#fff" }; },
+  get stepDotCurrent() { return { ...this.stepDotBase, background: "#f59e0b", color: "#fff" }; },
+  get stepDotUpcoming() { return { ...this.stepDotBase, background: "#e2e8f0", color: "#94a3b8" }; },
+
+  modalOverlay: {
+    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+    background: "rgba(15, 23, 42, 0.45)", display: "flex",
+    alignItems: "center", justifyContent: "center", padding: 20, zIndex: 50,
+  },
+  modalCard: {
+    background: "#fff", borderRadius: 14, padding: 22, maxWidth: 400, width: "100%",
+    boxShadow: "0 20px 40px rgba(15, 23, 42, 0.25)",
+  },
+  modalTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: "#0f172a" },
+  modalSub:   { fontSize: 13, color: "#64748b", margin: "6px 0 14px" },
+  modalLabel: { fontSize: 12, color: "#0f172a", fontWeight: 700, display: "block", marginBottom: 6 },
+  modalActions: { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 },
+  modalCancelBtn: { background: "#f1f5f9", color: "#475569", border: "none", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  modalConfirmBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 };
 
 export default PMTicketDetail;
