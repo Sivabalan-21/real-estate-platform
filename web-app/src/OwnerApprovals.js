@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 
 const API = "http://localhost:8000";
 
@@ -60,7 +60,14 @@ function DecisionModal({ decision, submitting, error, onCancel, onConfirm }) {
 
 function OwnerApprovals() {
   const navigate = useNavigate();
+  const location = useLocation();
   const token = localStorage.getItem("token");
+
+  // Set when we arrive here from a specific ticket row (e.g. OwnerTickets'
+  // "Review" link) so we can scroll to and highlight just that card instead
+  // of leaving the owner to hunt for it in the list.
+  const focusTicketId = location.state?.ticketId || null;
+  const focusedCardRef = useRef(null);
 
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -93,6 +100,15 @@ function OwnerApprovals() {
   }, [token]);
 
   useEffect(() => { fetchPending(); }, [fetchPending]);
+
+  // Once the focused ticket's card is actually in the DOM, scroll it into
+  // view. Runs after every ticket-list update, not just on mount, since the
+  // fetch resolves asynchronously after the navigation state is already set.
+  useEffect(() => {
+    if (focusTicketId && focusedCardRef.current) {
+      focusedCardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [focusTicketId, tickets]);
 
   const confirmDecision = async (note) => {
     if (!pendingDecision) return;
@@ -138,8 +154,14 @@ function OwnerApprovals() {
         </div>
       ) : (
         <div style={s.list}>
-          {tickets.map(t => (
-            <div key={t.id} style={s.card}>
+          {tickets.map(t => {
+            const isFocused = t.id === focusTicketId;
+            return (
+            <div
+              key={t.id}
+              ref={isFocused ? focusedCardRef : null}
+              style={{ ...s.card, ...(isFocused ? s.cardFocused : {}) }}
+            >
               <div style={s.cardTop}>
                 <span style={s.categoryIcon}>{CATEGORY_ICONS[t.category] || "🛠"}</span>
                 <div style={s.cardTopText}>
@@ -148,7 +170,10 @@ function OwnerApprovals() {
                     {t.property_name || "—"}{t.unit_number ? ` · Unit ${t.unit_number}` : ""} · {t.category || "—"}
                   </p>
                 </div>
-                <button style={s.viewLink} onClick={() => navigate(`/owner/tickets`)}>
+                <button
+                  style={s.viewLink}
+                  onClick={() => navigate(`/owner/tickets`, { state: { propertyId: t.property_id, status: "active" } })}
+                >
                   View in Tickets →
                 </button>
               </div>
@@ -176,7 +201,8 @@ function OwnerApprovals() {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -208,7 +234,8 @@ const s = {
   emptySub:   { fontSize: 13, color: "#64748b", margin: 0 },
 
   list: { display: "flex", flexDirection: "column", gap: 14 },
-  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 20 },
+  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 20, transition: "box-shadow 0.2s, border-color 0.2s" },
+  cardFocused: { border: "1px solid #6366f1", boxShadow: "0 0 0 3px #e0e7ff" },
 
   cardTop:     { display: "flex", alignItems: "flex-start", gap: 12 },
   categoryIcon:{ fontSize: 24 },

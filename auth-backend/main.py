@@ -36,7 +36,7 @@ from schemas import (
     TicketCreate,
     TicketTransitionRequest,
 )
-from services.ticket_service import transition_ticket
+from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
 from services.user_service import (
     backfill_companies,
@@ -1490,15 +1490,24 @@ def get_owner_portfolio(
     for prop in properties:
         units = prop.units
         total_units = len(units)
+        # AFTER
         occupied_count = sum(1 for u in units if u.status == "occupied")
         vacant_count = sum(1 for u in units if u.status == "vacant")
+# This counts units whose *occupancy* status is "maintenance" — it is
+# NOT derived from and has no link to MaintenanceTicket rows (see
+# open_ticket_count below, which is the actual ticket count). The
+# frontend surfaces it as "Under Repair" specifically to avoid
+# implying the two are the same number.
         maintenance_count = sum(1 for u in units if u.status == "maintenance")
 
         open_ticket_count = (
             db.query(MaintenanceTicket)
             .filter(
                 MaintenanceTicket.property_id == prop.id,
-                MaintenanceTicket.status != "closed",
+        # "closed" and "rejected" are both terminal states (see
+        # ticket_states.py) — neither has work pending, so neither
+        # counts as "open".
+                MaintenanceTicket.status.notin_(("closed", "rejected")),
             )
             .count()
         )
@@ -1651,6 +1660,7 @@ def create_maintenance_ticket(
     db.add(ticket)
     db.flush()  # assigns ticket.id before the history row references it
     record_ticket_history(db, ticket, from_status=None, to_status="open", changed_by=user.username)
+    sync_unit_status_to_maintenance(db, ticket)   
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
@@ -2018,6 +2028,11 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     record" the moment a PM changed status or saved a note, even though the
     tenant data was never actually missing server-side."""
     data = serialize_ticket(ticket)
+
+    data["history"] = [
+        serialize_ticket_history(h)
+        for h in sorted(ticket.history, key=lambda h: h.created_at)
+    ]
     # pm_notes was removed from serialize_ticket's base output (it was
     # leaking to every caller, tenant included). PM-facing views are the
     # one place that should still see it.
@@ -2126,10 +2141,11 @@ def get_owner_tickets(
 
     valid_statuses = TICKET_STATUSES
     # "active" is a synthetic filter value, not a real ticket status — it
-    # means "everything except closed", matching how open_ticket_count
-    # below is already computed. Lets links like "view tickets for this
-    # property" show everything the badge counted, not just Open/In
-    # Progress.
+# means "everything still in play", matching how open_ticket_count
+# below is already computed: not closed AND not rejected, since both
+# are terminal states (see ticket_states.py). Lets links like "view
+# tickets for this property" show everything the badge counted, not
+# just Open/In Progress.
     if status and status != "active" and status not in valid_statuses:
         raise HTTPException(400, f"status must be one of {valid_statuses}")
 
@@ -2147,7 +2163,7 @@ def get_owner_tickets(
         query = query.filter(MaintenanceTicket.category == category)
 
     if status == "active":
-        query = query.filter(MaintenanceTicket.status != "closed")
+        query = query.filter(MaintenanceTicket.status.notin_(("closed", "rejected")))
     elif status:
         # Explicit status wins over the default Open/In-Progress view.
         query = query.filter(MaintenanceTicket.status == status)

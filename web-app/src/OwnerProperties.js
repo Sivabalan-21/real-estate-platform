@@ -87,7 +87,7 @@ function OwnerProperties() {
                   {p.maintenance_count > 0 && (
                     <>
                       <span style={s.dot}>•</span>
-                      <span>{p.maintenance_count} maintenance</span>
+                      <span>{p.maintenance_count} under repair</span>
                     </>
                   )}
                 </div>

@@ -160,6 +160,14 @@ class Unit(Base):
         nullable=False
     )  # vacant / occupied / maintenance
 
+    # Set whenever a maintenance ticket auto-flips this unit's status to
+    # "maintenance" (see services/ticket_service.py), so it can be restored
+    # once every open ticket on the unit is resolved. Untouched by manual
+    # status edits in Property Management -- those don't go through the
+    # ticket-sync path, so this stays None for a unit a PM just marks
+    # "Maintenance" by hand with no ticket behind it.
+    pre_maintenance_status = Column(String, nullable=True)
+
     rent_amount = Column(Float, nullable=True)
 
     created_at = Column(

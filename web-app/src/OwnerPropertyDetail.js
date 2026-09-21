@@ -18,6 +18,8 @@ function OwnerPropertyDetail() {
   const [property, setProperty] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [units, setUnits] = useState([]);
+  const [unitsLoading, setUnitsLoading] = useState(true);
 
   // No single-property GET endpoint exists yet for the owner role — /owner/portfolio
   // already returns every property with the exact stats this page needs, so we
@@ -47,7 +49,22 @@ function OwnerPropertyDetail() {
     }
   }, [id, token]);
 
-  useEffect(() => { fetchProperty(); }, [fetchProperty]);
+  const fetchUnits = useCallback(async () => {
+    setUnitsLoading(true);
+    try {
+      const res = await fetch(`${API}/properties/${id}/units`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setUnits(Array.isArray(data) ? data : []);
+    } catch {
+      // fails silently — units list is supplementary to the stats above
+    } finally {
+      setUnitsLoading(false);
+    }
+  }, [id, token]);
+
+  useEffect(() => { fetchProperty(); fetchUnits(); }, [fetchProperty, fetchUnits]);
 
   if (loading) return <div style={s.page}><p style={s.muted}>Loading…</p></div>;
 
@@ -100,8 +117,29 @@ function OwnerPropertyDetail() {
           </div>
           <div style={s.statBox}>
             <p style={s.statValue}>{property.maintenance_count}</p>
-            <p style={s.statLabel}>Maintenance</p>
+            <p style={s.statLabel}>Under Repair</p>
           </div>
+        </div>
+
+        <div style={s.unitsSection}>
+          <p style={s.unitsTitle}>Units</p>
+          {unitsLoading ? (
+            <p style={s.muted}>Loading units…</p>
+          ) : units.length === 0 ? (
+            <p style={s.muted}>No units added yet.</p>
+          ) : (
+            units.map((u) => (
+              <div key={u.id} style={s.unitRow}>
+                <div>
+                  <p style={s.unitName}>{u.unit_number || u.name}</p>
+                  <p style={s.unitSub}>{u.status === "occupied" ? (u.tenant_name || "Occupied") : u.status}</p>
+                </div>
+                <span style={{ ...s.statusBadge, ...(s.statusColors[u.status] || s.statusColors.default) }}>
+                  {u.status}
+                </span>
+              </div>
+            ))
+          )}
         </div>
 
         <button
@@ -137,6 +175,19 @@ const s = {
   statBox:   { textAlign: "center", background: "#f8fafc", borderRadius: 10, padding: "14px 8px" },
   statValue: { margin: 0, fontSize: 20, fontWeight: 700, color: "#0f172a" },
   statLabel: { margin: "2px 0 0", fontSize: 11, color: "#64748b" },
+
+  unitsSection: { marginBottom: 24 },
+  unitsTitle:   { fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 },
+  unitRow:      { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc", borderRadius: 8, padding: "10px 14px", marginBottom: 8 },
+  unitName:     { margin: 0, fontSize: 13, fontWeight: 600, color: "#0f172a" },
+  unitSub:      { margin: "2px 0 0", fontSize: 11, color: "#64748b" },
+  statusBadge:  { fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, textTransform: "capitalize" },
+  statusColors: {
+    occupied: { background: "#ecfdf5", color: "#059669" },
+    vacant:   { background: "#fffbeb", color: "#b45309" },
+    maintenance: { background: "#fef2f2", color: "#b91c1c" },
+    default:  { background: "#f1f5f9", color: "#475569" },
+  },
 
   ticketsBtn: { width: "100%", background: "#6366f1", border: "none", color: "#fff", padding: "12px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 };

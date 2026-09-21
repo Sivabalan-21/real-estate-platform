@@ -121,3 +121,37 @@ def test_in_progress_ticket_still_counts_as_open(
 
     portfolio = client_factory(owner).get("/owner/portfolio").json()
     assert portfolio[0]["open_ticket_count"] == 1
+
+
+def test_rejected_ticket_does_not_count_as_open(
+    db_session, company_a, pm_user, client_factory
+):
+    # Regression test: "rejected" is a terminal state (see ticket_states.py),
+    # same as "closed" -- neither has work pending. open_ticket_count used to
+    # only exclude "closed", so a rejected ticket still lit up the portfolio
+    # badge and showed up under the "active" ticket filter.
+    prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
+    owner = make_owner(db_session, company_a)
+
+    ticket = client_factory(pm_user).post(
+        f"/properties/{prop.id}/maintenance-tickets",
+        json={"title": "Squirrel in the attic"},
+    ).json()
+
+    pm_client = client_factory(pm_user)
+    for status in ("pm_review", "quote_requested", "quote_received", "pending_owner_approval"):
+        assert pm_client.post(f"/tickets/{ticket['id']}/transition", json={"new_status": status}).status_code == 200
+
+    reject = client_factory(owner).post(
+        f"/tickets/{ticket['id']}/transition", json={"new_status": "rejected"},
+    )
+    assert reject.status_code == 200
+
+    portfolio = client_factory(owner).get("/owner/portfolio").json()
+    assert portfolio[0]["open_ticket_count"] == 0
+
+    active_tickets = client_factory(owner).get(
+        "/owner/tickets", params={"status": "active", "property_id": prop.id}
+    ).json()
+    assert active_tickets["tickets"] == []
