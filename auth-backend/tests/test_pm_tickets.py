@@ -10,6 +10,7 @@ Covers:
 
 Run with:  pytest tests/test_pm_tickets.py -v
 """
+import os
 import uuid
 
 from models import User, Property, Unit, MaintenanceTicket, TicketAttachment, PropertyAssignment
@@ -107,6 +108,65 @@ def test_filter_by_status_open(db_session, company_a, client_factory):
     assert res.status_code == 200
     titles = {t["title"] for t in res.json()}
     assert titles == {"Open ticket"}
+
+
+def test_default_pm_ticket_list_contains_active_tickets_only(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_active_default")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+
+    active_titles = {}
+    for status in (
+        "open",
+        "pm_review",
+        "quote_requested",
+        "quote_received",
+        "pending_owner_approval",
+        "approved",
+        "in_progress",
+        "completed",
+    ):
+        title = f"{status} ticket"
+        active_titles[status] = make_ticket(
+            db_session, company_a, prop, unit, "tenant1", status=status, title=title
+        )
+    closed = make_ticket(
+        db_session, company_a, prop, unit, "tenant1", status="closed", title="Closed ticket"
+    )
+    rejected = make_ticket(
+        db_session, company_a, prop, unit, "tenant1", status="rejected", title="Rejected ticket"
+    )
+
+    res = client_factory(pm).get("/pm/tickets")
+
+    assert res.status_code == 200
+    returned_ids = {ticket["id"] for ticket in res.json()}
+    assert returned_ids == {ticket.id for ticket in active_titles.values()}
+    assert closed.id not in returned_ids
+    assert rejected.id not in returned_ids
+    assert db_session.get(MaintenanceTicket, closed.id) is not None
+    assert db_session.get(MaintenanceTicket, rejected.id) is not None
+
+
+def test_terminal_pm_ticket_detail_remains_accessible(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_terminal_detail")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(
+        db_session, company_a, prop, unit, "tenant1", status="closed", title="Historical ticket"
+    )
+
+    res = client_factory(pm).get(f"/pm/tickets/{ticket.id}")
+
+    assert res.status_code == 200
+    assert res.json()["id"] == ticket.id
+    assert res.json()["status"] == "closed"
 
 
 def test_filter_by_property_id(db_session, company_a, client_factory):
@@ -225,6 +285,81 @@ def test_pm_can_add_note(db_session, company_a, client_factory):
     assert reload_res.json()["pm_notes"] == "Called tenant, scheduling plumber for Thursday."
 
 
+def test_active_ticket_can_be_marked_urgent(db_session, company_a, client_factory):
+    pm = make_pm(db_session, company_a, "pm_priority_active")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="open")
+
+    res = client_factory(pm).patch(
+        f"/pm/tickets/{ticket.id}",
+        json={"priority": "urgent"},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["priority"] == "urgent"
+
+
+def test_closed_ticket_cannot_be_marked_urgent(db_session, company_a, client_factory):
+    pm = make_pm(db_session, company_a, "pm_priority_closed")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="closed")
+
+    res = client_factory(pm).patch(
+        f"/pm/tickets/{ticket.id}",
+        json={"priority": "urgent"},
+    )
+
+    assert res.status_code == 400
+    assert res.json()["detail"] == "Closed or rejected tickets cannot be marked urgent."
+
+
+def test_rejected_ticket_cannot_be_marked_urgent(db_session, company_a, client_factory):
+    pm = make_pm(db_session, company_a, "pm_priority_rejected")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1", status="rejected")
+
+    res = client_factory(pm).patch(
+        f"/pm/tickets/{ticket.id}",
+        json={"priority": "urgent"},
+    )
+
+    assert res.status_code == 400
+    assert res.json()["detail"] == "Closed or rejected tickets cannot be marked urgent."
+
+
+def test_terminal_urgent_priority_remains_visible_in_pm_detail(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_priority_terminal_urgent")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+
+    for status, suffix in (("closed", "closed"), ("rejected", "rejected")):
+        ticket = make_ticket(
+            db_session,
+            company_a,
+            prop,
+            unit,
+            "tenant1",
+            status=status,
+            title=f"{suffix.title()} urgent ticket",
+        )
+        ticket.priority = "urgent"
+        db_session.commit()
+
+        res = client_factory(pm).get(f"/pm/tickets/{ticket.id}")
+
+        assert res.status_code == 200
+        assert res.json()["priority"] == "urgent"
+
+
 def test_ticket_detail_includes_tenant_info_and_photos(db_session, company_a, client_factory):
     pm = make_pm(db_session, company_a)
     tenant = make_tenant(db_session, company_a, "photo_tenant")
@@ -246,6 +381,121 @@ def test_ticket_detail_includes_tenant_info_and_photos(db_session, company_a, cl
     assert body["tenant"]["username"] == tenant.username
     assert body["tenant"]["full_name"] == tenant.full_name
     assert len(body["attachments"]) == 3
+
+
+def test_authorized_pm_can_delete_ticket_attachment_and_file(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_attachment_delete")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        url=f"http://localhost/uploads/tickets/{ticket.id}/document.pdf",
+        filename="document.pdf",
+        type="pm_note",
+        uploaded_by=pm.username,
+    )
+    db_session.add(attachment)
+    db_session.commit()
+
+    filepath = os.path.join("uploads", "tickets", ticket.id, "document.pdf")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "wb") as uploaded_file:
+        uploaded_file.write(b"document")
+
+    res = client_factory(pm).delete(
+        f"/tickets/{ticket.id}/attachments/{attachment.id}"
+    )
+
+    assert res.status_code == 200
+    assert db_session.get(TicketAttachment, attachment.id) is None
+    assert not os.path.exists(filepath)
+
+
+def test_pm_cannot_delete_attachment_from_another_ticket(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_attachment_scope")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    other_ticket = make_ticket(
+        db_session, company_a, prop, unit, "tenant1", title="Other ticket"
+    )
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=other_ticket.id,
+        url=f"http://localhost/uploads/tickets/{other_ticket.id}/other.pdf",
+        filename="other.pdf",
+        type="pm_note",
+    )
+    db_session.add(attachment)
+    db_session.commit()
+
+    res = client_factory(pm).delete(
+        f"/tickets/{ticket.id}/attachments/{attachment.id}"
+    )
+
+    assert res.status_code == 404
+    assert db_session.get(TicketAttachment, attachment.id) is not None
+
+
+def test_non_authorized_pm_cannot_delete_ticket_attachment(
+    db_session, company_a, client_factory
+):
+    assigned_pm = make_pm(db_session, company_a, "pm_attachment_owner")
+    unauthorized_pm = make_pm(db_session, company_a, "pm_attachment_other")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, assigned_pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        url=f"http://localhost/uploads/tickets/{ticket.id}/protected.pdf",
+        filename="protected.pdf",
+        type="pm_note",
+    )
+    db_session.add(attachment)
+    db_session.commit()
+
+    res = client_factory(unauthorized_pm).delete(
+        f"/tickets/{ticket.id}/attachments/{attachment.id}"
+    )
+
+    assert res.status_code == 403
+    assert db_session.get(TicketAttachment, attachment.id) is not None
+
+
+def test_deleting_attachment_succeeds_when_file_is_missing(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_attachment_missing_file")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        url=f"http://localhost/uploads/tickets/{ticket.id}/missing.pdf",
+        filename="missing.pdf",
+        type="pm_note",
+    )
+    db_session.add(attachment)
+    db_session.commit()
+
+    res = client_factory(pm).delete(
+        f"/tickets/{ticket.id}/attachments/{attachment.id}"
+    )
+
+    assert res.status_code == 200
+    assert db_session.get(TicketAttachment, attachment.id) is None
 
 
 def test_invalid_status_filter_rejected(db_session, company_a, client_factory):

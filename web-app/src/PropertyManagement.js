@@ -11,6 +11,14 @@ const UNIT_STATUS_STYLES = {
 };
 
 const UNIT_TYPE_OPTIONS = ["Studio", "1BHK", "2BHK", "3BHK", "4BHK", "Penthouse", "Other"];
+const ACTIVE_TICKET_STATUSES = new Set([
+  "open", "pm_review", "quote_requested", "quote_received",
+  "pending_owner_approval", "approved", "in_progress", "completed",
+]);
+
+function isImageAttachment(attachment) {
+  return /\.(jpe?g|png|gif|webp)$/i.test(attachment.filename || "");
+}
 
 export default function PropertyManagement() {
   const navigate = useNavigate();
@@ -456,7 +464,7 @@ export default function PropertyManagement() {
   };
 
   const openTicketCount = (propertyId) =>
-    (ticketsMap[propertyId] || []).filter(t => t.status !== "closed").length;
+    (ticketsMap[propertyId] || []).filter(t => ACTIVE_TICKET_STATUSES.has(t.status)).length;
 
   const TICKET_STATUS_STYLES = {
     open: { bg: "#fee2e2", color: "#991b1b", label: "Open" },
@@ -977,7 +985,7 @@ export default function PropertyManagement() {
                         <span style={s.spinner} />
                         <span>Loading tickets…</span>
                       </div>
-                    ) : (ticketsMap[p.id]?.length || 0) === 0 ? (
+                    ) : (ticketsMap[p.id] || []).filter(t => ACTIVE_TICKET_STATUSES.has(t.status)).length === 0 ? (
                       <div style={s.unitsEmpty}>
                         <p style={s.unitsEmptyText}>No maintenance tickets logged</p>
                         {canManage && (
@@ -987,7 +995,7 @@ export default function PropertyManagement() {
                     ) : (
                       <>
                         <div style={s.ticketList}>
-                          {ticketsMap[p.id].map(t => {
+                          {ticketsMap[p.id].filter(t => ACTIVE_TICKET_STATUSES.has(t.status)).map(t => {
                             const st = TICKET_STATUS_STYLES[t.status] || { bg: "#f1f5f9", color: "#475569", label: t.status };
                             const pr = TICKET_PRIORITY_STYLES[t.priority] || TICKET_PRIORITY_STYLES.normal;
                             return (
@@ -998,9 +1006,16 @@ export default function PropertyManagement() {
                                   {t.attachments && t.attachments.length > 0 && (
                                     <div style={s.ticketPhotoRow}>
                                       {t.attachments.map(a => (
-                                        <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
-                                          <img src={a.url} alt={a.filename} style={s.ticketPhotoThumb} />
-                                        </a>
+                                        isImageAttachment(a) ? (
+                                          <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+                                            <img src={a.url} alt={a.filename} style={s.ticketPhotoThumb} />
+                                          </a>
+                                        ) : (
+                                          <a key={a.id} href={a.url} target="_blank" rel="noreferrer" style={s.ticketFileLink}>
+                                            <span aria-hidden="true">{/\.pdf$/i.test(a.filename || "") ? "📄" : "📎"}</span>
+                                            <span>{a.filename || "Attachment"}</span>
+                                          </a>
+                                        )
                                       ))}
                                     </div>
                                   )}
@@ -1497,6 +1512,7 @@ const s = {
   ticketDesc:      { fontSize: 11, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   ticketPhotoRow:  { display: "flex", gap: 6, marginTop: 6 },
   ticketPhotoThumb:{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", border: "1px solid #e2e8f0" },
+  ticketFileLink:  { display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 220, padding: "7px 9px", border: "1px solid #e2e8f0", borderRadius: 6, color: "#4f46e5", fontSize: 11, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   pill:            { fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20, textTransform: "capitalize", flexShrink: 0 },
   closeTicketBtn:  { background: "#0f172a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600, flexShrink: 0 },
   ticketFormBox:   { marginTop: 12, padding: 14, background: "#f8fafc", borderRadius: 8 },

@@ -85,7 +85,7 @@ function PMTickets() {
         <div style={s.filterGroup}>
           <label style={s.filterLabel}>Status</label>
           <select style={s.select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">All statuses</option>
+            <option value="">All active</option>
             <option value="open">Open</option>
             <option value="pm_review">PM Review</option>
             <option value="quote_requested">Quote Requested</option>
@@ -141,7 +141,10 @@ function PMTickets() {
                   <td style={s.td}>{t.unit_number || "—"}</td>
                   <td style={s.td}>{t.property_name || "—"}</td>
                   <td style={s.td}>{t.category || "—"}</td>
-                  <td style={s.td}><StatusPill status={t.status} /></td>
+                  <td style={s.td}>
+                    <StatusPill status={t.status} />
+                    {t.priority === "urgent" && <span style={s.urgentBadge}>Urgent</span>}
+                  </td>
                   <td style={s.td}>{formatDate(t.created_at)}</td>
                   <td style={s.td}>{formatDate(t.last_update_at || t.updated_at)}</td>
                 </tr>
@@ -180,6 +183,7 @@ const s = {
   td:        { padding: "12px 16px", color: "#334155", fontWeight: 500 },
 
   pill:      { fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 20, display: "inline-block" },
+  urgentBadge: { marginLeft: 6, fontSize: 10, fontWeight: 800, padding: "4px 8px", borderRadius: 20, display: "inline-block", background: "#fee2e2", color: "#b91c1c" },
 };
 
 export default PMTickets;

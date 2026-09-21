@@ -28,6 +28,10 @@ const STATUS_TO_STEP = {
   pending_owner_approval: 4, approved: 5, in_progress: 6, completed: 7,
   closed: 8, rejected: 4, in_review: 1, scheduled: 2,
 };
+const ACTIVE_PRIORITY_STATUSES = new Set([
+  "open", "pm_review", "quote_requested", "quote_received",
+  "pending_owner_approval", "approved", "in_progress", "completed",
+]);
 
 // Human-readable PM actions, one per legal forward transition out of the
 // current status. Deliberately does NOT include quote_requested ->
@@ -123,6 +127,29 @@ function TransitionModal({ action, submitting, error, onCancel, onConfirm }) {
   );
 }
 
+function AttachmentDeleteModal({ attachment, submitting, error, onCancel, onConfirm }) {
+  return (
+    <div style={s.modalOverlay} onClick={submitting ? undefined : onCancel}>
+      <div style={s.modalCard} onClick={e => e.stopPropagation()}>
+        <p style={s.modalTitle}>Delete this attachment?</p>
+        <p style={s.modalSub}>
+          <strong>{attachment.filename}</strong>
+        </p>
+        <p style={s.modalSub}>This document will be permanently removed.</p>
+        {error && <p style={s.errorText}>{error}</p>}
+        <div style={s.modalActions}>
+          <button style={s.modalCancelBtn} onClick={onCancel} disabled={submitting}>
+            Cancel
+          </button>
+          <button style={s.modalConfirmBtn} onClick={onConfirm} disabled={submitting}>
+            {submitting ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PMTicketDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -140,6 +167,19 @@ function PMTicketDetail() {
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const [vendors, setVendors] = useState([]);
+  const [vendorSelection, setVendorSelection] = useState("");
+  const [vendorSaving, setVendorSaving] = useState(false);
+  const [vendorError, setVendorError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [attachmentToDelete, setAttachmentToDelete] = useState(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteSuccess, setDeleteSuccess] = useState("");
+  const [prioritySaving, setPrioritySaving] = useState(false);
+  const [priorityError, setPriorityError] = useState("");
 
   const fetchTicket = useCallback(async () => {
     setLoading(true);
@@ -155,6 +195,7 @@ function PMTicketDetail() {
       }
       setTicket(data);
       setNoteDraft(data.pm_notes || "");
+      setVendorSelection(data.assigned_vendor_id || "");
     } catch {
       setError("Server error. Please try again.");
     } finally {
@@ -163,6 +204,13 @@ function PMTicketDetail() {
   }, [id, token]);
 
   useEffect(() => { fetchTicket(); }, [fetchTicket]);
+
+  useEffect(() => {
+    fetch(`${API}/vendors`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setVendors(Array.isArray(data) ? data : []))
+      .catch(() => setVendors([]));
+  }, [token]);
 
   const confirmTransition = async (note) => {
     if (!pendingAction) return;
@@ -191,6 +239,7 @@ function PMTicketDetail() {
   const saveNote = async () => {
     setSavingNote(true);
     setNoteSaved(false);
+    setNoteError("");
     try {
       const res = await fetch(`${API}/pm/tickets/${id}`, {
         method: "PATCH",
@@ -202,9 +251,112 @@ function PMTicketDetail() {
         setTicket(data);
         setNoteSaved(true);
         setTimeout(() => setNoteSaved(false), 2000);
+      } else {
+        setNoteError(data.detail || "Could not save note");
       }
+    } catch {
+      setNoteError("Server error. Please try again.");
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const saveVendor = async () => {
+    setVendorSaving(true);
+    setVendorError("");
+    try {
+      const res = await fetch(`${API}/tickets/${id}/assign-vendor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ vendor_id: vendorSelection || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVendorError(data.detail || "Could not assign vendor");
+        return;
+      }
+      setTicket(data);
+    } catch {
+      setVendorError("Server error. Please try again.");
+    } finally {
+      setVendorSaving(false);
+    }
+  };
+
+  const toggleUrgent = async () => {
+    setPrioritySaving(true);
+    setPriorityError("");
+    try {
+      const res = await fetch(`${API}/pm/tickets/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ priority: ticket.priority === "urgent" ? "normal" : "urgent" }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTicket(data);
+      } else {
+        setPriorityError(data.detail || "Could not update priority");
+      }
+    } catch {
+      setPriorityError("Server error. Please try again.");
+    } finally {
+      setPrioritySaving(false);
+    }
+  };
+
+  const uploadDocument = async event => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      const form = new FormData();
+      form.append("files", file);
+      form.append("attachment_type", "pm_note");
+      const res = await fetch(`${API}/tickets/${id}/attachments`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUploadError(data.detail || "Could not upload document");
+        return;
+      }
+      setTicket(current => ({ ...current, attachments: [...(current.attachments || []), ...data] }));
+    } catch {
+      setUploadError("Server error. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteAttachment = async attachment => {
+    setDeletingAttachmentId(attachment.id);
+    setDeleteError("");
+    setDeleteSuccess("");
+    try {
+      const res = await fetch(`${API}/tickets/${id}/attachments/${attachment.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDeleteError(data.detail || "Could not delete attachment");
+        return;
+      }
+      setTicket(current => ({
+        ...current,
+        attachments: (current.attachments || []).filter(item => item.id !== attachment.id),
+      }));
+      setDeleteSuccess("Attachment deleted.");
+      setAttachmentToDelete(null);
+    } catch {
+      setDeleteError("Server error. Please try again.");
+    } finally {
+      setDeletingAttachmentId(null);
     }
   };
 
@@ -224,6 +376,7 @@ function PMTicketDetail() {
   const st = STATUS_STYLES[ticket.status] || { bg: "#f1f5f9", color: "#475569", label: ticket.status };
   const actions = TICKET_ACTIONS[ticket.status] || [];
   const history = ticket.history || [];
+  const canChangePriority = ACTIVE_PRIORITY_STATUSES.has(ticket.status);
 
   return (
     <div style={s.page}>
@@ -251,7 +404,21 @@ function PMTicketDetail() {
         <div style={s.metaGrid}>
           <div>
             <p style={s.metaLabel}>Priority</p>
-            <p style={s.metaValue}>{ticket.priority === "urgent" ? "🚨 Urgent" : ticket.priority || "Normal"}</p>
+            <div style={s.priorityRow}>
+              <p style={s.metaValue}>{ticket.priority === "urgent" ? "🚨 Urgent" : ticket.priority || "Normal"}</p>
+              {canChangePriority && (
+                <button
+                  type="button"
+                  aria-label={ticket.priority === "urgent" ? "Remove urgent priority" : "Mark ticket urgent"}
+                  style={ticket.priority === "urgent" ? s.urgentToggleActive : s.urgentToggle}
+                  onClick={toggleUrgent}
+                  disabled={prioritySaving}
+                >
+                  {ticket.priority === "urgent" ? "Urgent" : "Mark urgent"}
+                </button>
+              )}
+            </div>
+            {priorityError && <p style={s.errorText}>{priorityError}</p>}
           </div>
           <div>
             <p style={s.metaLabel}>Submitted</p>
@@ -267,6 +434,20 @@ function PMTicketDetail() {
               <p style={s.metaValue}>{formatDateTime(ticket.closed_at)}</p>
             </div>
           )}
+        </div>
+
+        <div style={s.metadataPanel}>
+          <p style={s.sectionLabel}>Ticket Details</p>
+          <div style={s.detailGrid}>
+            <div><p style={s.metaLabel}>Unit address</p><p style={s.metaValue}>{ticket.unit_address || "—"}</p></div>
+            <div><p style={s.metaLabel}>Tenant</p><p style={s.metaValue}>{ticket.tenant?.full_name || ticket.tenant?.username || "—"}</p></div>
+            <div><p style={s.metaLabel}>Tenant email</p><p style={s.metaValue}>{ticket.tenant?.email || "—"}</p></div>
+            <div><p style={s.metaLabel}>Property</p><p style={s.metaValue}>{ticket.property_name || "—"}</p></div>
+            <div><p style={s.metaLabel}>Assigned PM</p><p style={s.metaValue}>{ticket.assigned_pm_name || ticket.assigned_pm || "—"}</p></div>
+            <div><p style={s.metaLabel}>Created</p><p style={s.metaValue}>{formatDateTime(ticket.created_at)}</p></div>
+            <div><p style={s.metaLabel}>Last updated</p><p style={s.metaValue}>{formatDateTime(ticket.updated_at)}</p></div>
+            {ticket.sla_target && <div><p style={s.metaLabel}>SLA target</p><p style={s.urgentText}>{ticket.sla_target}</p></div>}
+          </div>
         </div>
 
         {/* Tenant info */}
@@ -285,19 +466,55 @@ function PMTicketDetail() {
           )}
         </div>
 
-        {/* Photos */}
-        {ticket.attachments && ticket.attachments.length > 0 && (
-          <div style={s.section}>
-            <p style={s.sectionLabel}>Photos</p>
-            <div style={s.photoRow}>
+        <div style={s.section}>
+          <div style={s.sectionHeader}>
+            <p style={s.sectionLabel}>Attachments</p>
+            <label style={s.uploadBtn}>
+              {uploading ? "Uploading…" : "Upload Document"}
+              <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif" onChange={uploadDocument} disabled={uploading} style={s.hiddenInput} />
+            </label>
+          </div>
+          {uploadError && <p style={s.errorText}>{uploadError}</p>}
+          {deleteError && <p style={s.errorText}>{deleteError}</p>}
+          {deleteSuccess && <p style={s.savedHint}>{deleteSuccess}</p>}
+          {ticket.attachments?.length ? (
+            <div style={s.attachmentList}>
               {ticket.attachments.map(a => (
-                <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
-                  <img src={a.url} alt={a.filename} style={s.photoThumb} />
-                </a>
+                <div key={a.id} style={s.attachmentRow}>
+                  <span style={s.typeBadge}>{a.type === "pm_note" ? "PM note" : a.type || "Document"}</span>
+                  <a href={a.url} target="_blank" rel="noreferrer" style={s.attachmentLink} aria-label={`Open ${a.filename}`}>
+                    {a.filename}
+                  </a>
+                  <span style={s.attachmentDate}>{a.uploaded_at ? formatDateTime(a.uploaded_at) : "—"}</span>
+                  <button
+                    type="button"
+                    style={s.deleteAttachmentBtn}
+                    onClick={() => { setDeleteError(""); setDeleteSuccess(""); setAttachmentToDelete(a); }}
+                    disabled={Boolean(deletingAttachmentId)}
+                    aria-label={`Delete ${a.filename}`}
+                  >
+                    Delete
+                  </button>
+                </div>
               ))}
             </div>
-          </div>
-        )}
+          ) : <p style={s.muted}>No attachments yet.</p>}
+        </div>
+
+        <div style={s.section}>
+          <p style={s.sectionLabel}>Assign Vendor</p>
+          {ticket.assigned_vendor_id && <p style={s.assignedVendor}>Currently assigned: {ticket.assigned_vendor?.name || ticket.assigned_vendor_id}</p>}
+          {vendors.length === 0 ? <p style={s.muted}>No vendors yet</p> : (
+            <div style={s.vendorRow}>
+              <select style={s.vendorSelect} value={vendorSelection} onChange={e => setVendorSelection(e.target.value)}>
+                <option value="">Select a vendor</option>
+                {vendors.map(v => <option key={v.id} value={v.id}>{v.name || v.full_name || v.id}</option>)}
+              </select>
+              <button style={s.saveNoteBtn} onClick={saveVendor} disabled={vendorSaving}>{vendorSaving ? "Saving…" : "Save Vendor"}</button>
+            </div>
+          )}
+          {vendorError && <p style={s.errorText}>{vendorError}</p>}
+        </div>
 
         {/* Contextual actions — replaces the generic status dropdown */}
         <div style={s.section}>
@@ -326,7 +543,7 @@ function PMTicketDetail() {
 
         {/* Internal note */}
         <div style={s.section}>
-          <p style={s.sectionLabel}>Add Internal Note</p>
+          <p style={s.sectionLabel}>Add Note</p>
           <p style={s.sectionSub}>Visible to your team only — not shown to the tenant.</p>
           <textarea
             style={s.textarea}
@@ -341,6 +558,7 @@ function PMTicketDetail() {
             </button>
             {noteSaved && <span style={s.savedHint}>✓ Saved</span>}
           </div>
+          {noteError && <p style={s.errorText}>{noteError}</p>}
         </div>
 
         {/* Ticket history timeline */}
@@ -379,6 +597,15 @@ function PMTicketDetail() {
           onConfirm={confirmTransition}
         />
       )}
+      {attachmentToDelete && (
+        <AttachmentDeleteModal
+          attachment={attachmentToDelete}
+          submitting={Boolean(deletingAttachmentId)}
+          error={deleteError}
+          onCancel={() => { if (!deletingAttachmentId) setAttachmentToDelete(null); }}
+          onConfirm={() => deleteAttachment(attachmentToDelete)}
+        />
+      )}
     </div>
   );
 }
@@ -403,10 +630,17 @@ const s = {
   metaGrid:  { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, padding: "12px 0", borderTop: "1px solid #f1f5f9", borderBottom: "1px solid #f1f5f9", marginBottom: 4 },
   metaLabel: { fontSize: 11, color: "#94a3b8", fontWeight: 700, margin: 0, textTransform: "uppercase", letterSpacing: 0.3 },
   metaValue: { fontSize: 13, color: "#334155", fontWeight: 600, margin: "2px 0 0" },
+  priorityRow: { display: "flex", alignItems: "center", gap: 8 },
+  urgentToggle: { border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", borderRadius: 6, padding: "4px 7px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  urgentToggleActive: { border: "1px solid #dc2626", background: "#dc2626", color: "#fff", borderRadius: 6, padding: "4px 7px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  urgentText: { fontSize: 13, color: "#b91c1c", fontWeight: 700, margin: "2px 0 0" },
 
   section:      { marginTop: 18, paddingTop: 16, borderTop: "1px solid #f1f5f9" },
+  metadataPanel: { marginTop: 18, padding: 14, background: "#f8fafc", borderRadius: 10 },
+  detailGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 12, marginTop: 10 },
   sectionLabel: { fontSize: 12, color: "#0f172a", fontWeight: 700, margin: "0 0 4px" },
   sectionSub:   { fontSize: 12, color: "#94a3b8", margin: "0 0 10px" },
+  sectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 },
 
   tenantCard: { background: "#f8fafc", borderRadius: 10, padding: "12px 14px" },
   tenantName: { margin: 0, fontSize: 14, fontWeight: 700, color: "#0f172a" },
@@ -415,6 +649,14 @@ const s = {
 
   photoRow:  { display: "flex", gap: 10, flexWrap: "wrap" },
   photoThumb:{ width: 80, height: 80, borderRadius: 10, objectFit: "cover", border: "1px solid #e2e8f0" },
+  attachmentList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 },
+  attachmentRow: { display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#f8fafc", borderRadius: 8 },
+  typeBadge: { fontSize: 10, fontWeight: 700, color: "#475569", background: "#e2e8f0", borderRadius: 5, padding: "3px 6px" },
+  attachmentLink: { color: "#4f46e5", fontSize: 13, fontWeight: 600, textDecoration: "none", flex: 1, overflow: "hidden", textOverflow: "ellipsis" },
+  attachmentDate: { color: "#94a3b8", fontSize: 11 },
+  deleteAttachmentBtn: { background: "none", border: "none", color: "#64748b", padding: "4px 2px", cursor: "pointer", fontSize: 11, fontWeight: 600 },
+  uploadBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "8px 11px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 },
+  hiddenInput: { display: "none" },
 
   actionRow: { display: "flex", gap: 10, flexWrap: "wrap" },
   actionBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
@@ -423,6 +665,9 @@ const s = {
   noteActions: { display: "flex", alignItems: "center", gap: 12, marginTop: 10 },
   saveNoteBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   savedHint:   { fontSize: 12, color: "#059669", fontWeight: 600 },
+  vendorRow: { display: "flex", gap: 8, alignItems: "center" },
+  vendorSelect: { flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", background: "#fff" },
+  assignedVendor: { margin: "0 0 8px", fontSize: 12, color: "#475569" },
 
   historyList:  { marginTop: 4, display: "flex", flexDirection: "column", gap: 12 },
   historyRow:   { display: "flex", gap: 10, alignItems: "flex-start" },
