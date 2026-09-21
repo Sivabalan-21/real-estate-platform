@@ -4,7 +4,7 @@ import uuid
 
 import bcrypt
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 from typing import List
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -1575,6 +1575,9 @@ def serialize_ticket(ticket: MaintenanceTicket):
 # Compatibility alias used by the M1 list/filter endpoints.  The canonical
 # lifecycle and role-based transition rules live in ticket_states.py.
 TICKET_STATUSES = TICKET_STATUS_FILTERS
+ACTIVE_TICKET_STATUSES = tuple(
+    status for status in TICKET_STATUSES if status not in ("closed", "rejected")
+)
 TICKET_PRIORITIES = ("low", "normal", "high", "urgent")
 TICKET_CATEGORIES = (
     "Plumbing", "Electrical", "HVAC", "Roof", "Drywall", "Pest", "Appliance", "Other",
@@ -1991,6 +1994,8 @@ def get_pm_tickets(
 
     if status:
         query = query.filter(MaintenanceTicket.status == status)
+    else:
+        query = query.filter(MaintenanceTicket.status.in_(ACTIVE_TICKET_STATUSES))
 
     sort_column = MaintenanceTicket.updated_at if sort == "updated_at" else MaintenanceTicket.created_at
     query = query.order_by(sort_column.desc())
@@ -2037,6 +2042,23 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     # leaking to every caller, tenant included). PM-facing views are the
     # one place that should still see it.
     data["pm_notes"] = ticket.pm_notes
+    data["unit_address"] = (
+        ", ".join(
+            value for value in (
+                ticket.property.address if ticket.property else None,
+                f"Unit {ticket.unit.unit_number}" if ticket.unit else None,
+            ) if value
+        ) or None
+    )
+    data["assigned_pm_name"] = (
+        ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username
+        if ticket.assigned_pm_user else None
+    )
+    data["assigned_vendor"] = (
+        {"id": ticket.assigned_vendor_id, "name": ticket.assigned_vendor_id}
+        if ticket.assigned_vendor_id else None
+    )
+    data["sla_target"] = "24 hours from ticket creation" if ticket.priority == "urgent" else None
 
     # Whoever raised the ticket, if they're a real platform user (usually
     # the tenant, occasionally a PM logging on the tenant's behalf) — the
@@ -2055,6 +2077,46 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
         if raised_by_user else None
     )
     return data
+
+
+@app.get("/vendors")
+def get_vendors(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Vendor records are not modeled yet; keep the route stable for PM UI."""
+    if not user.company_id:
+        raise HTTPException(403, "Not authorized")
+    return []
+
+
+@app.post("/tickets/{ticket_id}/assign-vendor")
+def assign_ticket_vendor(
+    ticket_id: str,
+    data: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id,
+        MaintenanceTicket.company_id == user.company_id,
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.property_id not in _pm_assigned_property_ids(db, user.username):
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    vendor_id = data.get("vendor_id")
+    if vendor_id is not None and not isinstance(vendor_id, str):
+        raise HTTPException(400, "vendor_id must be a string or null")
+    ticket.assigned_vendor_id = vendor_id or None
+    ticket.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(ticket)
+    return serialize_pm_ticket_detail(ticket, db)
 
 
 @app.patch("/pm/tickets/{ticket_id}")
@@ -2086,7 +2148,14 @@ def update_pm_ticket(
 
     if "pm_notes" in data:
         ticket.pm_notes = (data.get("pm_notes") or "").strip() or None
+    if "priority" in data:
+        if data["priority"] not in TICKET_PRIORITIES:
+            raise HTTPException(400, f"Invalid priority. Must be one of {TICKET_PRIORITIES}")
+        if data["priority"] == "urgent" and ticket.status in ("closed", "rejected"):
+            raise HTTPException(400, "Closed or rejected tickets cannot be marked urgent.")
+        ticket.priority = data["priority"]
 
+    ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
     return serialize_pm_ticket_detail(ticket, db)
@@ -2215,6 +2284,7 @@ def serialize_attachment(attachment: TicketAttachment):
 async def upload_ticket_attachments(
     ticket_id: str,
     files: List[UploadFile] = File(...),
+    attachment_type: str = Form("photo"),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
@@ -2224,10 +2294,17 @@ async def upload_ticket_attachments(
     if ticket.company_id != user.company_id:
         raise HTTPException(403, "Not authorized")
 
-    # Tenant can only attach photos to their own ticket. PM/Admin roles can
-    # attach to any ticket in their company (e.g. adding a vendor quote later).
+    if attachment_type not in ("photo", "pm_note"):
+        raise HTTPException(400, "Unsupported attachment type")
+
+    # Tenant can only attach photos to their own ticket. PMs may attach
+    # internal documents; the existing tenant photo contract remains intact.
     if user.role == ROLE_TENANT and ticket.created_by != user.username:
         raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_TENANT and attachment_type != "photo":
+        raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_PROPERTY_MANAGER and ticket.property_id not in _pm_assigned_property_ids(db, user.username):
+        raise HTTPException(403, "Not authorized for this ticket")
 
     if len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
         raise HTTPException(400, f"Max {MAX_TICKET_PHOTOS_PER_UPLOAD} files per upload")
@@ -2238,11 +2315,12 @@ async def upload_ticket_attachments(
 
     contents_by_file = []
     for f in files:
-        if f.content_type not in ALLOWED_PHOTO_TYPES:
-            raise HTTPException(400, f"'{f.filename}' is not a supported image type")
+        allowed_types = ALLOWED_PM_ATTACHMENT_TYPES if attachment_type == "pm_note" else ALLOWED_PHOTO_TYPES
+        if f.content_type not in allowed_types:
+            raise HTTPException(400, f"'{f.filename}' is not a supported attachment type")
         data = await f.read()
         if len(data) > MAX_PHOTO_SIZE:
-            raise HTTPException(400, f"'{f.filename}' is too large (max 5MB)")
+            raise HTTPException(400, "File too large")
         contents_by_file.append(data)
 
     upload_dir = os.path.join("uploads", "tickets", ticket_id)
@@ -2260,7 +2338,7 @@ async def upload_ticket_attachments(
             ticket_id=ticket_id,
             url=f"{BACKEND_URL}/uploads/tickets/{ticket_id}/{stored_name}",
             filename=f.filename,
-            type="photo",
+            type=attachment_type,
             uploaded_by=user.username,
         )
         db.add(attachment)
@@ -2294,11 +2372,50 @@ def get_ticket_attachments(
     return [serialize_attachment(a) for a in attachments]
 
 
+@app.delete("/tickets/{ticket_id}/attachments/{attachment_id}")
+def delete_ticket_attachment(
+    ticket_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
+
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id,
+        MaintenanceTicket.company_id == user.company_id,
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+
+    if ticket.property_id not in _pm_assigned_property_ids(db, user.username):
+        raise HTTPException(403, "Not authorized for this ticket")
+
+    attachment = db.query(TicketAttachment).filter(
+        TicketAttachment.id == attachment_id,
+        TicketAttachment.ticket_id == ticket_id,
+    ).first()
+    if not attachment:
+        raise HTTPException(404, "Attachment not found")
+
+    stored_name = os.path.basename(attachment.url.rsplit("/", 1)[-1])
+    filepath = os.path.join("uploads", "tickets", ticket_id, stored_name)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    db.delete(attachment)
+    db.commit()
+
+    return {"message": "Attachment deleted successfully"}
+
+
 # ---- Unit photos (Day 8) ----
 
 MAX_PHOTO_SIZE = 5 * 1024 * 1024   # 5MB
 MAX_PHOTOS_PER_UPLOAD = 5
 ALLOWED_PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_PM_ATTACHMENT_TYPES = ALLOWED_PHOTO_TYPES | {"application/pdf"}
 
 
 def serialize_photo(photo: UnitPhoto):

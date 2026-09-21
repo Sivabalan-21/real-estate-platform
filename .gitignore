@@ -16,3 +16,5 @@ build/
 Thumbs.db.env
 
 .env
+
+auth-backend/uploads/
