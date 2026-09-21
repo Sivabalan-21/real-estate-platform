@@ -383,6 +383,38 @@ def test_ticket_detail_includes_tenant_info_and_photos(db_session, company_a, cl
     assert len(body["attachments"]) == 3
 
 
+def test_pm_attachment_under_limit_uploads_and_10mb_is_rejected(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_attachment_size")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    client = client_factory(pm)
+
+    valid_upload = client.post(
+        f"/tickets/{ticket.id}/attachments",
+        files=[("files", ("note.pdf", b"%PDF-1.4 test", "application/pdf"))],
+        data={"attachment_type": "pm_note"},
+    )
+
+    assert valid_upload.status_code == 201
+    assert valid_upload.json()[0]["type"] == "pm_note"
+
+    oversized_upload = client.post(
+        f"/tickets/{ticket.id}/attachments",
+        files=[(
+            "files",
+            ("ten-megabytes.pdf", b"x" * (10 * 1024 * 1024), "application/pdf"),
+        )],
+        data={"attachment_type": "pm_note"},
+    )
+
+    assert oversized_upload.status_code == 400
+    assert oversized_upload.json()["detail"] == "File too large"
+
+
 def test_authorized_pm_can_delete_ticket_attachment_and_file(
     db_session, company_a, client_factory
 ):

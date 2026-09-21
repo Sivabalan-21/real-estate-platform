@@ -11,3 +11,58 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+.ticket-stepper {
+  display: flex;
+  align-items: flex-start;
+  margin: 16px 0 20px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  padding-bottom: 2px;
+}
+
+.ticket-step-item {
+  display: flex;
+  flex: 1 1 72px;
+  min-width: 72px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ticket-step-line {
+  height: 2px;
+  flex: 1 1 0;
+  min-width: 8px;
+  margin-top: 13px;
+}
+
+.ticket-step-label {
+  width: 100%;
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: none;
+}
+
+.ticket-step-label-current {
+  color: #92400e;
+}
+
+@media (max-width: 600px) {
+  .ticket-stepper {
+    margin-right: -4px;
+    padding-right: 4px;
+  }
+
+  .ticket-step-item {
+    flex: 0 0 72px;
+  }
+}

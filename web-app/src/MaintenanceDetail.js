@@ -38,7 +38,7 @@ function StatusStepper({ status }) {
   const isDone = status === "closed" || status === "rejected";
 
   return (
-    <div style={s.stepper}>
+    <div className="ticket-stepper" style={s.stepper}>
       {STEPS.map((label, i) => {
         const completed = isDone || i < currentIndex;
         const current = !isDone && i === currentIndex;
@@ -50,11 +50,14 @@ function StatusStepper({ status }) {
         return (
           <React.Fragment key={label}>
             {i > 0 && (
-              <div style={{ ...s.stepLine, background: completed || current ? "#10b981" : "#e2e8f0" }} />
+              <div
+                className="ticket-step-line"
+                style={{ background: completed || current ? "#10b981" : "#e2e8f0" }}
+              />
             )}
-            <div style={s.stepItem}>
+            <div className="ticket-step-item">
               <div style={dotStyle}>{completed ? "✓" : i + 1}</div>
-              <span style={{ ...s.stepLabel, ...(current ? s.stepLabelCurrent : {}) }}>{label}</span>
+              <span className={`ticket-step-label${current ? " ticket-step-label-current" : ""}`}>{label}</span>
             </div>
           </React.Fragment>
         );
@@ -236,11 +239,7 @@ const s = {
   historyText:  { fontSize: 13, color: "#334155", margin: 0 },
   historyTime:  { fontSize: 12, color: "#94a3b8", margin: "2px 0 0" },
 
-  stepper:   { display: "flex", alignItems: "flex-start", margin: "16px 0 20px" },
-  stepItem:  { display: "flex", flexDirection: "column", alignItems: "center", width: 60, flexShrink: 0 },
-  stepLine:  { height: 2, flex: 1, marginTop: 13, minWidth: 8 },
-  stepLabel: { fontSize: 9, color: "#94a3b8", marginTop: 6, textAlign: "center", lineHeight: 1.2, fontWeight: 600 },
-  stepLabelCurrent: { color: "#92400e" },
+  stepper:   { maxWidth: "100%", boxSizing: "border-box" },
   stepDotBase: {
     width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center",
     justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0,
