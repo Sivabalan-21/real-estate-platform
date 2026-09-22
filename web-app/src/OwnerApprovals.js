@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import TicketComments from "./TicketComments";
 
 const API = "http://localhost:8000";
 
@@ -186,6 +187,8 @@ function OwnerApprovals() {
                 <span style={s.metaItem}><strong>Quote:</strong> {t.quote_amount != null ? t.quote_amount : "Not provided yet"}</span>
               </div>
 
+              <TicketComments ticketId={t.id} role="Owner" styles={s} />
+
               <div style={s.actionRow}>
                 <button
                   style={s.approveBtn}
@@ -248,6 +251,24 @@ const s = {
 
   metaRow:  { display: "flex", gap: 18, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid #f1f5f9" },
   metaItem: { fontSize: 12, color: "#64748b" },
+  section: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #f1f5f9" },
+  sectionLabel: { fontSize: 12, color: "#0f172a", fontWeight: 700, margin: "0 0 4px" },
+  sectionSub: { fontSize: 12, color: "#94a3b8", margin: "0 0 10px" },
+  commentList: { display: "flex", flexDirection: "column", gap: 10, margin: "10px 0 14px" },
+  commentCard: { background: "#f8fafc", borderRadius: 10, padding: "10px 12px" },
+  commentHeader: { display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" },
+  commentAuthor: { fontSize: 13, color: "#0f172a" },
+  commentRole: { fontSize: 11, color: "#64748b" },
+  commentBody: { margin: "7px 0", fontSize: 13, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap" },
+  commentFooter: { display: "flex", justifyContent: "space-between", gap: 8, color: "#94a3b8", fontSize: 11 },
+  visibilityBadge: { color: "#6366f1", fontWeight: 600 },
+  commentForm: { marginTop: 10 },
+  commentFormActions: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 8 },
+  visibilityControl: { flex: 1 },
+  visibilitySelect: { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", color: "#334155", fontSize: 12 },
+  sendButton: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  successText: { color: "#059669", fontSize: 12, fontWeight: 600, margin: "8px 0 0" },
+  srOnly: { position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 },
 
   actionRow:  { display: "flex", gap: 10, marginTop: 16 },
   approveBtn: { background: "#059669", border: "none", color: "#fff", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },

@@ -176,17 +176,12 @@ function OwnerTickets() {
             </thead>
             <tbody>
               {tickets.map(t => {
-                // Only pending-approval tickets are actionable for the owner
-                // today — clicking those takes them straight to the review
-                // screen. Everything else has nowhere useful to go yet
-                // (no /owner/tickets/:id detail page), so the row stays inert
-                // rather than navigating somewhere that looks broken.
-                const clickable = t.approval_required;
+                const clickable = true;
                 return (
                   <tr
                     key={t.id}
                     style={{ ...s.tr, ...(clickable ? s.trClickable : {}) }}
-                    onClick={clickable ? () => navigate("/owner/approvals", { state: { ticketId: t.id } }) : undefined}
+                    onClick={() => navigate(`/owner/tickets/${t.id}`)}
                     onMouseEnter={clickable ? e => { e.currentTarget.style.background = "#f8fafc"; } : undefined}
                     onMouseLeave={clickable ? e => { e.currentTarget.style.background = "transparent"; } : undefined}
                   >
@@ -203,7 +198,9 @@ function OwnerTickets() {
                     <td style={s.td}>{t.assigned_pm_name || t.assigned_pm || "Unassigned"}</td>
                     <td style={s.td}>{formatDate(t.created_at)}</td>
                     <td style={s.td}>{t.quote_amount != null ? t.quote_amount : "—"}</td>
-                    <td style={s.td}>{clickable && <span style={s.reviewLink}>Review →</span>}</td>
+                    <td style={s.td}>
+                      <span style={s.reviewLink}>{t.approval_required ? "Review →" : "View →"}</span>
+                    </td>
                   </tr>
                 );
               })}

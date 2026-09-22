@@ -194,6 +194,31 @@ def test_company_admin_can_create_owner_user(db_session, company_a, client_facto
     assert created.company_id == company_a.id
 
 
+def test_company_admin_can_create_vendor_user(db_session, company_a, admin_user, client_factory):
+    response = client_factory(admin_user).post("/users/create", json={
+        "email": "vendor@example.com",
+        "role": "Vendor",
+        "username": "vendor_a",
+    })
+
+    assert response.status_code == 200
+    created = db_session.query(User).filter(User.email == "vendor@example.com").one()
+    assert created.role == "Vendor"
+    assert created.company_id == company_a.id
+
+
+def test_company_admin_cannot_create_super_admin_user(
+    db_session, company_a, admin_user, client_factory
+):
+    response = client_factory(admin_user).post("/users/create", json={
+        "email": "super@example.com",
+        "role": "Super Admin",
+        "username": "super_attempt",
+    })
+
+    assert response.status_code in (400, 403)
+
+
 def test_property_manager_can_create_owner_user(db_session, company_a, pm_user, client_factory):
     client = client_factory(pm_user)
     res = client.post("/users/create", json={

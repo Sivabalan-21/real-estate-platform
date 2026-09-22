@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 from xmlrpc.client import Boolean
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Float, Date, Boolean  
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Float, Date, Boolean, Text
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -291,6 +291,12 @@ class MaintenanceTicket(Base):
         cascade="all, delete-orphan",
         order_by="TicketHistory.created_at",
     )
+    comments = relationship(
+        "TicketComment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TicketComment.created_at",
+    )
 
     # Day 14 spec calls this field `raised_by` — it's the same value as
     # `created_by` (whoever opened the ticket). No separate property here:
@@ -340,6 +346,42 @@ class TicketHistory(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     ticket = relationship("MaintenanceTicket", back_populates="history")
+
+
+class TicketComment(Base):
+    __tablename__ = "ticket_comments"
+    __table_args__ = (
+        CheckConstraint("length(trim(body)) > 0", name="ck_ticket_comments_body_not_blank"),
+        CheckConstraint(
+            "visible_to IN ('all', 'owner_pm', 'pm_vendor')",
+            name="ck_ticket_comments_visible_to",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=uuid_str)
+
+    ticket_id = Column(
+        String,
+        ForeignKey("maintenance_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Nullable for legacy pm_notes backfills where no reliable PM username
+    # exists; comments created through the API always have an author.
+    author_username = Column(
+        String,
+        ForeignKey("users.username"),
+        nullable=True,
+        index=True,
+    )
+    author_role = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    visible_to = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ticket = relationship("MaintenanceTicket", back_populates="comments")
+    author_user = relationship("User", foreign_keys=[author_username])
 
 
 class Lease(Base):

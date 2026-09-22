@@ -194,3 +194,8 @@ class TicketAttachmentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TicketCommentCreate(BaseModel):
+    body: str
+    visible_to: str = "all"

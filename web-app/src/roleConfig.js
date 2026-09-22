@@ -4,7 +4,7 @@
 
 export const ROLE_OPTIONS_BY_CURRENT_ROLE = {
   "Super Admin":    ["Company Admin", "Regional Manager", "Property Manager", "Tenant", "Owner", "Vendor"],
-  "Company Admin":  ["Regional Manager", "Property Manager", "Owner", "Tenant"],
+  "Company Admin":  ["Regional Manager", "Property Manager", "Owner", "Tenant", "Vendor"],
   "Regional Manager": ["Property Manager"],
   "Property Manager": ["Tenant", "Vendor"],
 };

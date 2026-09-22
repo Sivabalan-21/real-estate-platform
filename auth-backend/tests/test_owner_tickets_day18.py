@@ -178,6 +178,35 @@ def test_pending_approval_count_defaults_to_zero(db_session, company_a, client_f
     assert res.json()["pending_approval_count"] == 0
 
 
+def test_owner_can_open_normal_ticket_detail(db_session, company_a, client_factory):
+    owner = make_owner(db_session, company_a, "detail_owner")
+    prop = make_property(db_session, company_a, "Detail Tower")
+    unit = make_unit(db_session, prop)
+    ticket = make_ticket(
+        db_session, company_a, prop, unit, "tenant1",
+        status="quote_requested", title="Quote requested repair",
+    )
+
+    response = client_factory(owner).get(f"/tickets/{ticket.id}")
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Quote requested repair"
+    assert response.json()["approval_required"] is False
+
+
+def test_owner_cannot_open_another_company_ticket_detail(
+    db_session, company_a, company_b, client_factory
+):
+    owner = make_owner(db_session, company_a, "detail_owner_a")
+    prop = make_property(db_session, company_b, "Other Company Tower")
+    unit = make_unit(db_session, prop)
+    ticket = make_ticket(db_session, company_b, prop, unit, "tenant_b")
+
+    response = client_factory(owner).get(f"/tickets/{ticket.id}")
+
+    assert response.status_code == 403
+
+
 def test_invalid_status_filter_rejected(db_session, company_a, client_factory):
     owner = make_owner(db_session, company_a)
     res = client_factory(owner).get("/owner/tickets", params={"status": "not_a_real_status"})

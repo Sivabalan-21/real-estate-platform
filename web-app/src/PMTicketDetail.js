@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import TicketComments from "./TicketComments";
 
 const API = "http://localhost:8000";
 
@@ -168,6 +169,7 @@ function PMTicketDetail() {
   const [savingNote, setSavingNote] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteError, setNoteError] = useState("");
+
   const [vendors, setVendors] = useState([]);
   const [vendorSelection, setVendorSelection] = useState("");
   const [vendorSaving, setVendorSaving] = useState(false);
@@ -541,7 +543,9 @@ function PMTicketDetail() {
           {transitionError && !pendingAction && <p style={s.errorText}>{transitionError}</p>}
         </div>
 
-        {/* Internal note */}
+        <TicketComments ticketId={ticket.id} role="Property Manager" styles={s} />
+
+        {/* Legacy pm_notes editor retained for backward compatibility */}
         <div style={s.section}>
           <p style={s.sectionLabel}>Add Note</p>
           <p style={s.sectionSub}>Visible to your team only — not shown to the tenant.</p>
@@ -673,6 +677,21 @@ const s = {
   historyRow:   { display: "flex", gap: 10, alignItems: "flex-start" },
   historyDot:   { width: 8, height: 8, borderRadius: "50%", background: "#a5b4fc", marginTop: 6, flexShrink: 0 },
   historyText:  { fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.5 },
+  commentList: { display: "flex", flexDirection: "column", gap: 10, margin: "10px 0 14px" },
+  commentCard: { background: "#f8fafc", borderRadius: 10, padding: "10px 12px" },
+  commentHeader: { display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" },
+  commentAuthor: { fontSize: 13, color: "#0f172a" },
+  commentRole: { fontSize: 11, color: "#64748b" },
+  commentBody: { margin: "7px 0", fontSize: 13, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap" },
+  commentFooter: { display: "flex", justifyContent: "space-between", gap: 8, color: "#94a3b8", fontSize: 11 },
+  visibilityBadge: { color: "#6366f1", fontWeight: 600 },
+  commentForm: { marginTop: 10 },
+  commentFormActions: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 8 },
+  visibilityControl: { flex: 1 },
+  visibilitySelect: { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", color: "#334155", fontSize: 12 },
+  sendButton: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  successText: { color: "#059669", fontSize: 12, fontWeight: 600, margin: "8px 0 0" },
+  srOnly: { position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 },
 
   stepper:   { display: "flex", alignItems: "flex-start", margin: "16px 0 20px" },
   stepItem:  { display: "flex", flexDirection: "column", alignItems: "center", width: 60, flexShrink: 0 },

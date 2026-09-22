@@ -15,8 +15,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory
-from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_HIERARCHY
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment
+from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
     LoginRequest,
@@ -35,6 +35,7 @@ from schemas import (
     MaintenanceTicketUpdate,
     TicketCreate,
     TicketTransitionRequest,
+    TicketCommentCreate,
 )
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
@@ -1613,6 +1614,111 @@ def serialize_ticket_history(history: TicketHistory):
     }
 
 
+COMMENT_VISIBILITY_BY_ROLE = {
+    ROLE_TENANT: ("all",),
+    ROLE_PROPERTY_MANAGER: ("all", "owner_pm", "pm_vendor"),
+    ROLE_OWNER: ("all", "owner_pm"),
+    ROLE_VENDOR: ("all", "pm_vendor"),
+    # Existing ticket APIs allow the administrative roles to access tickets;
+    # give them the same full communication access as a PM.
+    ROLE_ADMIN: ("all", "owner_pm", "pm_vendor"),
+    ROLE_COMPANY_ADMIN: ("all", "owner_pm", "pm_vendor"),
+    ROLE_SUPER_ADMIN: ("all", "owner_pm", "pm_vendor"),
+}
+COMMENT_VISIBILITIES = ("all", "owner_pm", "pm_vendor")
+
+
+def _authorize_ticket_access(
+    db: Session,
+    ticket: MaintenanceTicket,
+    user: User,
+) -> None:
+    """Apply the same company/tenant/PM ticket access rules as GET /tickets."""
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_TENANT and ticket.created_by != user.username:
+        raise HTTPException(403, "Not authorized")
+    if user.role == ROLE_PROPERTY_MANAGER and not _pm_can_manage_property(
+        db, user.username, ticket.property_id
+    ):
+        raise HTTPException(403, "Not authorized for this ticket")
+
+
+def serialize_ticket_comment(comment: TicketComment):
+    return {
+        "id": comment.id,
+        "ticket_id": comment.ticket_id,
+        "author_username": comment.author_username,
+        "author_role": comment.author_role,
+        "body": comment.body,
+        "visible_to": comment.visible_to,
+        "created_at": comment.created_at,
+    }
+
+
+@app.post("/tickets/{ticket_id}/comments", status_code=201)
+def create_ticket_comment(
+    ticket_id: str,
+    data: TicketCommentCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    _authorize_ticket_access(db, ticket, user)
+
+    body = data.body.strip()
+    if not body:
+        raise HTTPException(400, "Comment body cannot be empty")
+    if data.visible_to not in COMMENT_VISIBILITIES:
+        raise HTTPException(400, "Invalid comment visibility")
+
+    allowed_visibility = COMMENT_VISIBILITY_BY_ROLE.get(user.role, ())
+    if data.visible_to not in allowed_visibility:
+        raise HTTPException(400, "Comment visibility is not allowed for this role")
+
+    comment = TicketComment(
+        ticket_id=ticket.id,
+        author_username=user.username,
+        author_role=user.role,
+        body=body,
+        visible_to=data.visible_to,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    return serialize_ticket_comment(comment)
+
+
+@app.get("/tickets/{ticket_id}/comments")
+def get_ticket_comments(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    _authorize_ticket_access(db, ticket, user)
+
+    allowed_visibility = COMMENT_VISIBILITY_BY_ROLE.get(user.role, ())
+    comments = (
+        db.query(TicketComment)
+        .filter(
+            TicketComment.ticket_id == ticket_id,
+            TicketComment.visible_to.in_(allowed_visibility),
+        )
+        .order_by(TicketComment.created_at.asc())
+        .all()
+    )
+    return [serialize_ticket_comment(comment) for comment in comments]
+
+
 @app.post("/properties/{property_id}/maintenance-tickets", status_code=201)
 def create_maintenance_ticket(
     property_id: str,
@@ -1850,6 +1956,8 @@ def get_ticket(
         db, user.username, ticket.property_id
     ):
         raise HTTPException(403, "Not authorized for this ticket")
+    if user.role == ROLE_OWNER and ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized for this ticket")
 
     data = serialize_ticket(ticket)
     # Tenants keep the minimal {status, changed_at} history serialize_ticket()
@@ -1857,6 +1965,30 @@ def get_ticket(
     # tenant-facing. Everyone else gets the full record.
     if user.role != ROLE_TENANT:
         data["history"] = [serialize_ticket_history(h) for h in ticket.history]
+    if user.role == ROLE_OWNER:
+        data["assigned_pm_name"] = (
+            ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username
+            if ticket.assigned_pm_user else None
+        )
+        data["assigned_vendor"] = (
+            {"id": ticket.assigned_vendor_id, "name": ticket.assigned_vendor_id}
+            if ticket.assigned_vendor_id else None
+        )
+        data["quote_amount"] = None
+        data["approval_required"] = ticket.status == OWNER_APPROVAL_STATUS
+        raised_by_user = (
+            db.query(User).filter(User.username == ticket.created_by).first()
+            if ticket.created_by else None
+        )
+        data["tenant"] = (
+            {
+                "username": raised_by_user.username,
+                "full_name": raised_by_user.full_name,
+                "email": raised_by_user.email,
+                "phone": raised_by_user.phone,
+            }
+            if raised_by_user else None
+        )
     return data
 
 
@@ -2177,7 +2309,8 @@ OWNER_APPROVAL_STATUS = PENDING_OWNER_APPROVAL
 def serialize_owner_ticket(ticket: MaintenanceTicket):
     data = serialize_ticket(ticket)
     data["assigned_pm_name"] = (
-        ticket.assigned_pm_user.full_name if ticket.assigned_pm_user else None
+        (ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username)
+        if ticket.assigned_pm_user else None
     )
     # No quote/estimate model exists yet (Month 2 vendor work) — placeholder
     # key so the frontend column is already wired and doesn't need a shape
@@ -2309,7 +2442,10 @@ async def upload_ticket_attachments(
     if len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
         raise HTTPException(400, f"Max {MAX_TICKET_PHOTOS_PER_UPLOAD} files per upload")
 
-    existing_count = db.query(TicketAttachment).filter(TicketAttachment.ticket_id == ticket_id).count()
+    existing_count = db.query(TicketAttachment).filter(
+    TicketAttachment.ticket_id == ticket_id,
+    TicketAttachment.type == attachment_type,
+    ).count()
     if existing_count + len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
         raise HTTPException(400, f"This ticket already has {existing_count} attachment(s); max {MAX_TICKET_PHOTOS_PER_UPLOAD} total")
 

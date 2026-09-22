@@ -31,6 +31,7 @@ import OwnerPropertyDetail from "./OwnerPropertyDetail";
 import OwnerApprovals from "./OwnerApprovals";
 import OwnerReports from "./OwnerReports";
 import OwnerTickets from "./OwnerTickets";
+import OwnerTicketDetail from "./OwnerTicketDetail";
 
 import TenantLayout from "./TenantLayout";
 import TenantDashboard from "./TenantDashboard";
@@ -109,6 +110,7 @@ function App() {
           <Route path="properties"             element={<OwnerProperties />} />
           <Route path="properties/:id"         element={<OwnerPropertyDetail />} />
           <Route path="tickets"                element={<OwnerTickets />} />
+          <Route path="tickets/:id"             element={<OwnerTicketDetail />} />
           <Route path="approvals"              element={<OwnerApprovals />} />
           <Route path="reports"                element={<OwnerReports />} />
         </Route>

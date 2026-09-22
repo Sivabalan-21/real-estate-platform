@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
+import TicketComments from "./TicketComments";
 
 const API = "http://localhost:8000";
 
@@ -157,6 +158,8 @@ function MaintenanceDetail() {
           </div>
         )}
 
+        <TicketComments ticketId={ticket.id} role="Tenant" styles={s} />
+
         {ticket.attachments && ticket.attachments.length > 0 && (
           <div style={s.photosSection}>
             <p style={s.metaLabel}>Photos</p>
@@ -227,6 +230,8 @@ const s = {
   metaLabel: { fontSize: 12, color: "#94a3b8", fontWeight: 600 },
   metaValue: { fontSize: 13, color: "#334155", fontWeight: 600 },
 
+  section: { marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9" },
+  sectionSub: { fontSize: 12, color: "#94a3b8", margin: "0 0 10px" },
   photosSection: { marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9" },
   photoRow:  { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 },
   photoThumb:{ width: 72, height: 72, borderRadius: 10, objectFit: "cover", border: "1px solid #e2e8f0" },
@@ -238,6 +243,21 @@ const s = {
   historyDot:   { width: 8, height: 8, borderRadius: "50%", background: "#a5b4fc", marginTop: 6, flexShrink: 0 },
   historyText:  { fontSize: 13, color: "#334155", margin: 0 },
   historyTime:  { fontSize: 12, color: "#94a3b8", margin: "2px 0 0" },
+  commentList: { display: "flex", flexDirection: "column", gap: 10, margin: "10px 0 14px" },
+  commentCard: { background: "#f8fafc", borderRadius: 10, padding: "10px 12px" },
+  commentHeader: { display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" },
+  commentAuthor: { fontSize: 13, color: "#0f172a" },
+  commentRole: { fontSize: 11, color: "#64748b" },
+  commentBody: { margin: "7px 0", fontSize: 13, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap" },
+  commentFooter: { display: "flex", justifyContent: "space-between", gap: 8, color: "#94a3b8", fontSize: 11 },
+  visibilityBadge: { color: "#6366f1", fontWeight: 600 },
+  commentForm: { marginTop: 10 },
+  commentFormActions: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 8 },
+  visibilityControl: { flex: 1 },
+  visibilitySelect: { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", color: "#334155", fontSize: 12 },
+  sendButton: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  successText: { color: "#059669", fontSize: 12, fontWeight: 600, margin: "8px 0 0" },
+  srOnly: { position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 },
 
   stepper:   { maxWidth: "100%", boxSizing: "border-box" },
   stepDotBase: {
