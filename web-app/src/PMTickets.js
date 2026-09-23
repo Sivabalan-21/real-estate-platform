@@ -26,8 +26,24 @@ function StatusPill({ status }) {
   return <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>;
 }
 
+// Backend timestamps (e.g. "2026-09-23T10:15:30.123456") come from a naive
+// UTC datetime and carry no "Z"/offset. Per the ECMAScript date-parsing spec,
+// a date-time string with no timezone is parsed as LOCAL time, not UTC — so
+// in any timezone ahead of UTC (e.g. IST) every comment timestamp silently
+// comes out hours in the "past" relative to the real clock. Since
+// lastViewedAt is stored from the real clock (Date.now()), that made new
+// comments compare as always-older-than-last-viewed, so unread never fired.
+// Append "Z" before parsing so it's read as UTC, matching what the backend
+// actually means.
+function parseServerTimestamp(value) {
+  if (typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) {
+    return new Date(`${value}Z`).getTime();
+  }
+  return new Date(value).getTime();
+}
+
 function commentTimestamp(value) {
-  const parsed = typeof value === "number" ? value : new Date(value).getTime();
+  const parsed = typeof value === "number" ? value : parseServerTimestamp(value);
   if (!Number.isFinite(parsed)) return 0;
   return parsed < 100000000000 ? parsed * 1000 : parsed;
 }

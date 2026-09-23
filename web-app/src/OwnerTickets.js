@@ -34,8 +34,19 @@ function StatusPill({ status }) {
   return <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>;
 }
 
+// See PMTickets.js for why this exists: naive-UTC backend timestamps have no
+// "Z"/offset, so `new Date(value)` alone parses them as local time and every
+// comment ends up looking hours old, which stops the unread check from ever
+// firing (lastViewedAt comes from the real clock via Date.now()).
+function parseServerTimestamp(value) {
+  if (typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) {
+    return new Date(`${value}Z`).getTime();
+  }
+  return new Date(value).getTime();
+}
+
 function commentTimestamp(value) {
-  const parsed = typeof value === "number" ? value : new Date(value).getTime();
+  const parsed = typeof value === "number" ? value : parseServerTimestamp(value);
   if (!Number.isFinite(parsed)) return 0;
   return parsed < 100000000000 ? parsed * 1000 : parsed;
 }

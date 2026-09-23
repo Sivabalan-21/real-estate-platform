@@ -33,6 +33,16 @@ const SCOPE_STYLES = {
   pm_vendor: { background: "#f0fdf4", border: "#bbf7d0" },
 };
 
+// See PMTickets.js: backend created_at strings are naive UTC with no "Z", so
+// `new Date(str)` parses them as local time and they look hours old in any
+// timezone ahead of UTC. Append "Z" so they're read as UTC.
+function parseServerTimestamp(value) {
+  if (typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) {
+    return new Date(`${value}Z`).getTime();
+  }
+  return new Date(value).getTime();
+}
+
 function formatCommentDate(dateStr) {
   if (!dateStr) return "—";
   const date = new Date(dateStr);
@@ -185,7 +195,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
             const author = comment.author_username || "Unknown user";
             const unread = Number.isFinite(lastViewedAt)
               && comment.author_username !== currentUsername
-              && new Date(comment.created_at).getTime() > lastViewedAt;
+              && parseServerTimestamp(comment.created_at) > lastViewedAt;
             return (
               <article
                 key={comment.id}
