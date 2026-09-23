@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import TicketComments from "./TicketComments";
+import AttachmentList from "./AttachmentList";
 
 const API = "http://localhost:8000";
 
@@ -479,28 +480,10 @@ function PMTicketDetail() {
           {uploadError && <p style={s.errorText}>{uploadError}</p>}
           {deleteError && <p style={s.errorText}>{deleteError}</p>}
           {deleteSuccess && <p style={s.savedHint}>{deleteSuccess}</p>}
-          {ticket.attachments?.length ? (
-            <div style={s.attachmentList}>
-              {ticket.attachments.map(a => (
-                <div key={a.id} style={s.attachmentRow}>
-                  <span style={s.typeBadge}>{a.type === "pm_note" ? "PM note" : a.type || "Document"}</span>
-                  <a href={a.url} target="_blank" rel="noreferrer" style={s.attachmentLink} aria-label={`Open ${a.filename}`}>
-                    {a.filename}
-                  </a>
-                  <span style={s.attachmentDate}>{a.uploaded_at ? formatDateTime(a.uploaded_at) : "—"}</span>
-                  <button
-                    type="button"
-                    style={s.deleteAttachmentBtn}
-                    onClick={() => { setDeleteError(""); setDeleteSuccess(""); setAttachmentToDelete(a); }}
-                    disabled={Boolean(deletingAttachmentId)}
-                    aria-label={`Delete ${a.filename}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : <p style={s.muted}>No attachments yet.</p>}
+          <AttachmentList
+            attachments={ticket.attachments}
+            onRequestDelete={a => { setDeleteError(""); setDeleteSuccess(""); setAttachmentToDelete(a); }}
+          />
         </div>
 
         <div style={s.section}>
@@ -547,8 +530,8 @@ function PMTicketDetail() {
 
         {/* Legacy pm_notes editor retained for backward compatibility */}
         <div style={s.section}>
-          <p style={s.sectionLabel}>Add Note</p>
-          <p style={s.sectionSub}>Visible to your team only — not shown to the tenant.</p>
+          <p style={s.sectionLabel}>Legacy PM Note</p>
+          <p style={s.sectionSub}>Kept for backward compatibility. Use Comments / Messages for new communication.</p>
           <textarea
             style={s.textarea}
             rows={4}

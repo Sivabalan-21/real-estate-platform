@@ -1,22 +1,36 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API = "http://localhost:8000";
+const LAST_VIEWED_PREFIX = "ticket_comments_last_viewed_";
+const POLL_INTERVAL_MS = 5000;
 
 const VISIBILITY_OPTIONS = {
-  Tenant: [{ value: "all", label: "Everyone" }],
+  Tenant: [{ value: "all", label: "All Parties" }],
   "Property Manager": [
-    { value: "all", label: "Everyone" },
+    { value: "all", label: "All Parties" },
     { value: "owner_pm", label: "Owner + PM" },
     { value: "pm_vendor", label: "PM + Vendor" },
   ],
   Owner: [
-    { value: "all", label: "Everyone" },
+    { value: "all", label: "All Parties" },
     { value: "owner_pm", label: "Owner + PM" },
   ],
   Vendor: [
-    { value: "all", label: "Everyone" },
+    { value: "all", label: "All Parties" },
     { value: "pm_vendor", label: "PM + Vendor" },
   ],
+};
+
+const VISIBILITY_LABELS = {
+  all: "All Parties",
+  owner_pm: "Owner + PM",
+  pm_vendor: "PM + Vendor",
+};
+
+const SCOPE_STYLES = {
+  all: { background: "#ffffff", border: "#e2e8f0" },
+  owner_pm: { background: "#eff6ff", border: "#bfdbfe" },
+  pm_vendor: { background: "#f0fdf4", border: "#bbf7d0" },
 };
 
 function formatCommentDate(dateStr) {
@@ -32,47 +46,92 @@ function formatCommentDate(dateStr) {
   });
 }
 
+function defaultStyles() {
+  return {
+    section: {},
+    sectionLabel: { margin: 0, color: "#0f172a", fontSize: 17, fontWeight: 700 },
+    sectionSub: { margin: "4px 0 14px", color: "#64748b", fontSize: 13 },
+    muted: { color: "#64748b", fontSize: 13 },
+    commentList: { display: "flex", flexDirection: "column", gap: 10, margin: "12px 0 16px" },
+    commentCard: { border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 },
+    commentHeader: { display: "flex", alignItems: "flex-start", gap: 10 },
+    avatar: { width: 30, height: 30, borderRadius: "50%", display: "grid", placeItems: "center", flexShrink: 0, background: "#e0e7ff", color: "#3730a3", fontSize: 13, fontWeight: 700 },
+    commentHeaderText: { minWidth: 0, flex: 1 },
+    commentAuthor: { color: "#0f172a", fontSize: 13 },
+    unreadAuthor: { fontWeight: 800 },
+    commentRole: { display: "inline-block", marginLeft: 7, padding: "2px 7px", borderRadius: 999, background: "#f1f5f9", color: "#475569", fontSize: 10, fontWeight: 700 },
+    commentMeta: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 3, color: "#64748b", fontSize: 11 },
+    commentBody: { margin: "10px 0 0 40px", color: "#334155", fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+    visibilityBadge: { padding: "2px 7px", borderRadius: 999, background: "#ffffffb8", border: "1px solid #cbd5e1", color: "#475569", fontWeight: 600 },
+    commentForm: { marginTop: 12 },
+    textarea: { width: "100%", boxSizing: "border-box", resize: "vertical", padding: 10, border: "1px solid #cbd5e1", borderRadius: 9, font: "inherit", color: "#334155" },
+    commentFormActions: { display: "flex", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 8 },
+    visibilityControl: { flex: "1 1 180px" },
+    visibilitySelect: { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#334155", font: "inherit", fontSize: 12 },
+    sendButton: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700 },
+    errorText: { color: "#dc2626", fontSize: 12, margin: "8px 0 0" },
+    successText: { color: "#059669", fontSize: 12, fontWeight: 600, margin: "8px 0 0" },
+    srOnly: { position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 },
+  };
+}
+
 function TicketComments({ ticketId, role, styles = {} }) {
   const token = localStorage.getItem("token");
+  const currentUsername = localStorage.getItem("username");
+  const ui = useMemo(() => ({ ...defaultStyles(), ...styles }), [styles]);
   const options = useMemo(
     () => VISIBILITY_OPTIONS[role] || VISIBILITY_OPTIONS.Tenant,
     [role]
   );
+  const canSend = role !== "Tenant";
+  const lastViewedKey = `${LAST_VIEWED_PREFIX}${ticketId}`;
   const [comments, setComments] = useState([]);
   const [body, setBody] = useState("");
-  const [visibleTo, setVisibleTo] = useState(options[0].value);
+  const [visibleTo, setVisibleTo] = useState("all");
+  const [lastViewedAt] = useState(() => {
+    const stored = localStorage.getItem(lastViewedKey);
+    return stored ? Number(stored) : null;
+  });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const fetchingRef = useRef(false);
 
-  const fetchComments = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const fetchComments = useCallback(async ({ initial = false } = {}) => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    if (initial) setLoading(true);
+    if (initial) setError("");
     try {
       const response = await fetch(`${API}/tickets/${ticketId}/comments`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
       if (!response.ok) {
-        setError(data.detail || "Could not load comments");
+        if (initial) setError(data.detail || "Could not load messages.");
         return;
       }
       setComments(Array.isArray(data) ? data : []);
+      if (initial) localStorage.setItem(lastViewedKey, String(Date.now()));
     } catch {
-      setError("Server error. Please try again.");
+      if (initial) setError("Could not load messages.");
     } finally {
-      setLoading(false);
+      fetchingRef.current = false;
+      if (initial) setLoading(false);
     }
-  }, [ticketId, token]);
+  }, [lastViewedKey, ticketId, token]);
 
   useEffect(() => {
-    setVisibleTo(options[0].value);
-    fetchComments();
-  }, [fetchComments, options]);
+    setVisibleTo("all");
+    fetchComments({ initial: true });
+    const intervalId = window.setInterval(() => fetchComments(), POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [fetchComments]);
 
   const submitComment = async event => {
     event.preventDefault();
+    if (!canSend) return;
     if (!body.trim()) {
       setError("Write a message before sending.");
       return;
@@ -92,87 +151,103 @@ function TicketComments({ ticketId, role, styles = {} }) {
       });
       const data = await response.json();
       if (!response.ok) {
-        setError(data.detail || "Could not send comment");
+        setError(data.detail || "Could not send message.");
         return;
       }
       setBody("");
-      setSuccess("Comment sent.");
-      await fetchComments();
+      setSuccess("Message sent.");
+      setComments(previous => [...previous, data]);
     } catch {
-      setError("Server error. Please try again.");
+      setError("Could not send message. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const heading = role === "Tenant" ? "Updates from your PM" : "Comments / Messages";
+  const description = role === "Tenant"
+    ? "Messages shared with you by your property team."
+    : "Keep the ticket conversation in one place.";
+
   return (
-    <div style={styles.section}>
-      <p style={styles.sectionLabel}>Comments</p>
-      <p style={styles.sectionSub}>
-        {role === "Tenant" ? "Messages shared with your property team." : "Keep the ticket conversation in one place."}
-      </p>
+    <div style={ui.section}>
+      <p style={ui.sectionLabel}>{heading}</p>
+      <p style={ui.sectionSub}>{description}</p>
 
       {loading ? (
-        <p style={styles.muted}>Loading comments…</p>
+        <p style={ui.muted}>Loading messages…</p>
       ) : comments.length === 0 ? (
-        <p style={styles.muted}>No comments yet.</p>
+        <p style={ui.muted}>No messages yet.</p>
       ) : (
-        <div style={styles.commentList}>
-          {comments.map(comment => (
-            <div key={comment.id} style={styles.commentCard}>
-              <div style={styles.commentHeader}>
-                <strong style={styles.commentAuthor}>{comment.author_username || "Unknown user"}</strong>
-                <span style={styles.commentRole}>{comment.author_role}</span>
-              </div>
-              <p style={styles.commentBody}>{comment.body}</p>
-              <div style={styles.commentFooter}>
-                <span>{formatCommentDate(comment.created_at)}</span>
-                {role !== "Tenant" && (
-                  <span style={styles.visibilityBadge}>
-                    {options.find(option => option.value === comment.visible_to)?.label || comment.visible_to}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+        <div style={ui.commentList}>
+          {comments.map(comment => {
+            const scopeStyle = SCOPE_STYLES[comment.visible_to] || SCOPE_STYLES.all;
+            const author = comment.author_username || "Unknown user";
+            const unread = Number.isFinite(lastViewedAt)
+              && comment.author_username !== currentUsername
+              && new Date(comment.created_at).getTime() > lastViewedAt;
+            return (
+              <article
+                key={comment.id}
+                style={{ ...ui.commentCard, background: scopeStyle.background, borderColor: scopeStyle.border }}
+              >
+                <div style={{ ...ui.commentHeader, alignItems: "flex-start" }}>
+                  <span style={ui.avatar} aria-hidden="true">{author.charAt(0).toUpperCase()}</span>
+                  <div style={ui.commentHeaderText}>
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8, rowGap: 4, minWidth: 0 }}>
+                      <strong style={{ ...ui.commentAuthor, ...(unread ? ui.unreadAuthor : {}), overflowWrap: "anywhere" }}>{author}</strong>
+                      <span style={{ ...ui.commentRole, marginLeft: 0, flexShrink: 0 }}>{comment.author_role}</span>
+                    </div>
+                    <div style={ui.commentMeta}>
+                      <time dateTime={comment.created_at}>{formatCommentDate(comment.created_at)}</time>
+                      {role !== "Tenant" && (
+                        <span style={ui.visibilityBadge}>{VISIBILITY_LABELS[comment.visible_to] || comment.visible_to}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <p style={ui.commentBody}>{comment.body}</p>
+              </article>
+            );
+          })}
         </div>
       )}
 
-      <form onSubmit={submitComment} style={styles.commentForm}>
-        <textarea
-          style={styles.textarea}
-          rows={3}
-          value={body}
-          onChange={event => setBody(event.target.value)}
-          placeholder="Write a message…"
-          disabled={submitting}
-          aria-label="Write a message"
-        />
-        <div style={styles.commentFormActions}>
-          {options.length > 1 && (
-            <label style={styles.visibilityControl}>
-              <span className={styles.srOnly}>Comment visibility</span>
+      {canSend && (
+        <form onSubmit={submitComment} style={ui.commentForm}>
+          <textarea
+            style={ui.textarea}
+            rows={3}
+            value={body}
+            onChange={event => setBody(event.target.value)}
+            placeholder="Write a message…"
+            disabled={submitting}
+            aria-label="Write a message"
+          />
+          <div style={ui.commentFormActions}>
+            <label style={ui.visibilityControl}>
+              <span style={ui.srOnly}>Message visibility</span>
               <select
-                style={styles.visibilitySelect}
+                style={ui.visibilitySelect}
                 value={visibleTo}
                 onChange={event => setVisibleTo(event.target.value)}
                 disabled={submitting}
-                aria-label="Comment visibility"
+                aria-label="Message visibility"
               >
                 {options.map(option => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
-          )}
-          <button type="submit" style={styles.sendButton} disabled={submitting || !body.trim()}>
-            {submitting ? "Sending…" : "Send"}
-          </button>
-        </div>
-      </form>
+            <button type="submit" style={ui.sendButton} disabled={submitting || !body.trim()}>
+              {submitting ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </form>
+      )}
 
-      {error && <p style={styles.errorText}>{error}</p>}
-      {success && <p style={styles.successText}>{success}</p>}
+      {error && <p style={ui.errorText}>{error}</p>}
+      {success && <p style={ui.successText}>{success}</p>}
     </div>
   );
 }

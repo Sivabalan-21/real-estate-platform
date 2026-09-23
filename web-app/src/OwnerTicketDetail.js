@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import TicketComments from "./TicketComments";
+import AttachmentList from "./AttachmentList";
 
 const API = "http://localhost:8000";
 const WORKFLOW = [
@@ -138,11 +139,7 @@ function OwnerTicketDetail() {
 
       <section style={s.card}>
         <h2 style={s.cardTitle}>Attachments</h2>
-        {ticket.attachments?.length ? ticket.attachments.map(attachment => (
-          <a key={attachment.id} href={`${API}${attachment.url}`} target="_blank" rel="noreferrer" style={s.attachment}>
-            <span>{attachment.filename}</span><span>{attachment.type} · {dateValue(attachment.uploaded_at)}</span>
-          </a>
-        )) : <p style={s.muted}>No attachments.</p>}
+        <AttachmentList attachments={ticket.attachments} />
       </section>
 
       <section style={s.card}>

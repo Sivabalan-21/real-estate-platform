@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import TicketComments from "./TicketComments";
+import AttachmentList from "./AttachmentList";
 
 const API = "http://localhost:8000";
 
@@ -160,18 +161,10 @@ function MaintenanceDetail() {
 
         <TicketComments ticketId={ticket.id} role="Tenant" styles={s} />
 
-        {ticket.attachments && ticket.attachments.length > 0 && (
-          <div style={s.photosSection}>
-            <p style={s.metaLabel}>Photos</p>
-            <div style={s.photoRow}>
-              {ticket.attachments.map(a => (
-                <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
-                  <img src={a.url} alt={a.filename} style={s.photoThumb} />
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
+        <div style={s.photosSection}>
+          <p style={s.metaLabel}>Attachments</p>
+          <AttachmentList attachments={ticket.attachments} />
+        </div>
 
         {/* Real status-change feed, backed by ticket.history. Replaces the
             hardcoded "No updates yet" placeholder — full threaded PM
@@ -179,7 +172,7 @@ function MaintenanceDetail() {
             server-side (record_ticket_history), so there's no reason to
             show tenants a static string when this data was one field away. */}
         <div style={s.updatesSection}>
-          <p style={s.metaLabel}>Updates from your PM</p>
+          <p style={s.metaLabel}>Status updates</p>
           {ticket.history && ticket.history.length > 0 ? (
             <div style={s.historyList}>
               {[...ticket.history].reverse().map((h, i) => {

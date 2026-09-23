@@ -1,7 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 const API = "http://localhost:8000";
+const LAST_VIEWED_PREFIX = "ticket_comments_last_viewed_";
+const POLL_INTERVAL_MS = 5000;
 
 const STATUS_STYLES = {
   open: { bg: "#fee2e2", color: "#991b1b", label: "Open" }, pm_review: { bg: "#fef3c7", color: "#92400e", label: "PM Review" },
@@ -24,16 +26,40 @@ function StatusPill({ status }) {
   return <span style={{ ...s.pill, background: st.bg, color: st.color }}>{st.label}</span>;
 }
 
+function commentTimestamp(value) {
+  const parsed = typeof value === "number" ? value : new Date(value).getTime();
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed < 100000000000 ? parsed * 1000 : parsed;
+}
+
+function getUnreadState(ticketId, comments, username, baselines) {
+  const storedLastViewed = localStorage.getItem(`${LAST_VIEWED_PREFIX}${ticketId}`);
+  const storedTimestamp = storedLastViewed ? commentTimestamp(Number(storedLastViewed)) : 0;
+
+  const latestVisibleCommentAt = comments.reduce((latest, comment) => {
+    if (comment.author_username === username) return latest;
+    return Math.max(latest, commentTimestamp(comment.created_at));
+  }, 0);
+
+  const lastViewedAt = storedTimestamp || baselines[ticketId] || latestVisibleCommentAt;
+  if (!storedTimestamp && !baselines[ticketId]) baselines[ticketId] = latestVisibleCommentAt;
+  return latestVisibleCommentAt > lastViewedAt;
+}
+
 function PMTickets() {
   const navigate = useNavigate();
   const token = localStorage.getItem("token");
+  const username = localStorage.getItem("username");
 
   const [tickets, setTickets] = useState([]);
+  const [unreadTickets, setUnreadTickets] = useState({});
   const [properties, setProperties] = useState([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const fetchingRef = useRef(false);
+  const unreadBaselinesRef = useRef({});
 
   const fetchProperties = useCallback(async () => {
     try {
@@ -47,9 +73,11 @@ function PMTickets() {
     }
   }, [token]);
 
-  const fetchTickets = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const fetchTickets = useCallback(async ({ silent = false } = {}) => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    if (!silent) setLoading(true);
+    if (!silent) setError("");
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set("status", statusFilter);
@@ -60,19 +88,47 @@ function PMTickets() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.detail || "Could not load tickets");
+        if (!silent) setError(data.detail || "Could not load tickets");
         return;
       }
       setTickets(data);
+
+      const commentResults = await Promise.allSettled(
+        data.map(async ticket => {
+          const commentsResponse = await fetch(`${API}/tickets/${ticket.id}/comments`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const commentsData = await commentsResponse.json();
+          if (!commentsResponse.ok) {
+            throw new Error(commentsData.detail || "Could not load ticket messages");
+          }
+          return [ticket.id, getUnreadState(ticket.id, commentsData, username, unreadBaselinesRef.current)];
+        })
+      );
+      setUnreadTickets(previous => {
+        const next = {};
+        data.forEach((ticket, index) => {
+          const result = commentResults[index];
+          next[ticket.id] = result.status === "fulfilled"
+            ? result.value[1]
+            : Boolean(previous[ticket.id]);
+        });
+        return next;
+      });
     } catch {
-      setError("Server error. Please try again.");
+      if (!silent) setError("Server error. Please try again.");
     } finally {
-      setLoading(false);
+      fetchingRef.current = false;
+      if (!silent) setLoading(false);
     }
-  }, [token, statusFilter, propertyFilter]);
+  }, [token, username, statusFilter, propertyFilter]);
 
   useEffect(() => { fetchProperties(); }, [fetchProperties]);
-  useEffect(() => { fetchTickets(); }, [fetchTickets]);
+  useEffect(() => {
+    fetchTickets();
+    const intervalId = window.setInterval(() => fetchTickets({ silent: true }), POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [fetchTickets]);
 
   return (
     <div style={s.page}>
@@ -135,9 +191,18 @@ function PMTickets() {
               </tr>
             </thead>
             <tbody>
-              {tickets.map(t => (
+              {tickets.map(t => {
+                const isUnread = unreadTickets[t.id];
+                return (
                 <tr key={t.id} style={s.tr} onClick={() => navigate(`/pm/tickets/${t.id}`)}>
-                  <td style={s.td}>#{t.id.slice(-6).toUpperCase()}</td>
+                  <td style={s.td}>
+                    <span>#{t.id.slice(-6).toUpperCase()}</span>
+                    {isUnread ? (
+                      <span style={s.unreadBadge} title="New message">
+                        <span aria-hidden="true">●</span> New message
+                      </span>
+                    ) : null}
+                  </td>
                   <td style={s.td}>{t.unit_number || "—"}</td>
                   <td style={s.td}>{t.property_name || "—"}</td>
                   <td style={s.td}>{t.category || "—"}</td>
@@ -148,7 +213,8 @@ function PMTickets() {
                   <td style={s.td}>{formatDate(t.created_at)}</td>
                   <td style={s.td}>{formatDate(t.last_update_at || t.updated_at)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -184,6 +250,7 @@ const s = {
 
   pill:      { fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 20, display: "inline-block" },
   urgentBadge: { marginLeft: 6, fontSize: 10, fontWeight: 800, padding: "4px 8px", borderRadius: 20, display: "inline-block", background: "#fee2e2", color: "#b91c1c" },
+  unreadBadge: { marginLeft: 8, fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 4, background: "#eef2ff", color: "#4338ca", whiteSpace: "nowrap" },
 };
 
 export default PMTickets;
