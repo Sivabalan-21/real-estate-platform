@@ -79,6 +79,7 @@ function TenantLayout() {
         return;
       }
       setDisplayName(data.full_name || username);
+      localStorage.setItem("display_name", data.full_name || username || "");
       setPhone(data.phone || "");
       setEditOpen(false);
     } catch {

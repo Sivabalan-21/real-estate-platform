@@ -42,6 +42,15 @@ def sync_unit_status_from_ticket_resolution(db: Session, ticket: MaintenanceTick
 
     No-op if the ticket isn't tied to a unit, or if the unit isn't currently
     flagged "maintenance" (e.g. a PM had already changed it by hand).
+
+    The restored value is derived from the unit's *current* lease, not from
+    the "pre_maintenance_status" snapshot taken when the ticket flipped the
+    unit to "maintenance" -- that snapshot can go stale while the ticket is
+    open (e.g. a lease starts or ends during the repair window), so blindly
+    replaying it back can leave the unit showing the wrong state even though
+    it correctly left "maintenance". pre_maintenance_status is still cleared
+    here since its only job was marking that this unit's "maintenance" flag
+    came from a ticket (see sync_unit_status_to_maintenance above).
     """
     if not ticket.unit_id:
         return
@@ -61,7 +70,7 @@ def sync_unit_status_from_ticket_resolution(db: Session, ticket: MaintenanceTick
     if other_open:
         return
 
-    unit.status = unit.pre_maintenance_status or "vacant"
+    unit.status = "occupied" if (unit.lease is not None and unit.lease.status == "active") else "vacant"
     unit.pre_maintenance_status = None
     db.add(unit)
 

@@ -6,6 +6,7 @@ function Layout() {
   const location  = useLocation();
   const role      = localStorage.getItem("role");
   const username  = localStorage.getItem("username");
+  const displayName = localStorage.getItem("display_name") || username;
 
   const logout = () => {
     localStorage.clear();
@@ -47,10 +48,10 @@ function Layout() {
         {/* USER INFO */}
         <div style={s.sidebarUser}>
           <div style={s.userAvatar}>
-            {(username || "S")[0].toUpperCase()}
+            {(displayName || "S")[0].toUpperCase()}
           </div>
           <div style={s.userInfo}>
-            <p style={s.userInfoName}>{username}</p>
+            <p style={s.userInfoName}>{displayName}</p>
             <p style={s.userInfoRole}>{role}</p>
           </div>
         </div>

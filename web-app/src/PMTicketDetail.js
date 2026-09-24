@@ -57,7 +57,10 @@ const CATEGORY_ICONS = {
 
 function formatDateTime(dateStr) {
   if (!dateStr) return "—";
-  const d = new Date(dateStr);
+  const normalized = typeof dateStr === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(dateStr)
+    ? `${dateStr}Z`
+    : dateStr;
+  const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
@@ -472,8 +475,12 @@ function PMTicketDetail() {
         <div style={s.section}>
           <div style={s.sectionHeader}>
             <p style={s.sectionLabel}>Attachments</p>
-            <label style={s.uploadBtn}>
-              {uploading ? "Uploading…" : "Upload Document"}
+            <label style={s.uploadDropzone}>
+              <span style={s.uploadIcon} aria-hidden="true">↑</span>
+              <span>
+                <strong>{uploading ? "Uploading…" : "Upload document"}</strong>
+                <small style={s.uploadHint}>PDF or image · up to 10 MB</small>
+              </span>
               <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif" onChange={uploadDocument} disabled={uploading} style={s.hiddenInput} />
             </label>
           </div>
@@ -560,10 +567,13 @@ function PMTicketDetail() {
                     <span style={s.historyDot} />
                     <div>
                       <p style={s.historyText}>
-                        {formatDateTime(h.created_at)} · {h.changed_by || "System"} moved to{" "}
-                        <strong>{toSt.label}</strong>
-                        {h.note ? `: ${h.note}` : ""}
-                      </p>
+  
+  <strong>{h.changed_by_name}</strong>
+  {h.changed_by_role && <span style={s.historyRole}>{h.changed_by_role}</span>}
+  <span> · {formatDateTime(h.created_at)} · moved to </span>
+  <strong>{toSt.label}</strong>
+  {h.note ? `: ${h.note}` : ""}
+                    </p>
                     </div>
                   </div>
                 );
@@ -598,7 +608,7 @@ function PMTicketDetail() {
 }
 
 const s = {
-  page:      { padding: 24, maxWidth: 640, margin: "0 auto", fontFamily: "'DM Sans', sans-serif" },
+  page:      { padding: 24, maxWidth: 960, width: "100%", boxSizing: "border-box", margin: "0 auto", fontFamily: "'DM Sans', sans-serif" },
   muted:     { color: "#64748b", fontSize: 14 },
   errorText: { color: "#ef4444", fontSize: 13, marginBottom: 16 },
   backLink:  { background: "none", border: "none", color: "#6366f1", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 16 },
@@ -642,7 +652,9 @@ const s = {
   attachmentLink: { color: "#4f46e5", fontSize: 13, fontWeight: 600, textDecoration: "none", flex: 1, overflow: "hidden", textOverflow: "ellipsis" },
   attachmentDate: { color: "#94a3b8", fontSize: 11 },
   deleteAttachmentBtn: { background: "none", border: "none", color: "#64748b", padding: "4px 2px", cursor: "pointer", fontSize: 11, fontWeight: 600 },
-  uploadBtn: { background: "#6366f1", border: "none", color: "#fff", padding: "8px 11px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 },
+  uploadDropzone: { display: "flex", alignItems: "center", gap: 9, padding: "9px 12px", border: "1px dashed #a5b4fc", borderRadius: 9, background: "#eef2ff", color: "#3730a3", cursor: "pointer", fontSize: 12 },
+  uploadIcon: { width: 25, height: 25, display: "grid", placeItems: "center", borderRadius: "50%", background: "#6366f1", color: "#fff", fontSize: 16, fontWeight: 700 },
+  uploadHint: { display: "block", marginTop: 2, color: "#64748b", fontSize: 10, fontWeight: 400 },
   hiddenInput: { display: "none" },
 
   actionRow: { display: "flex", gap: 10, flexWrap: "wrap" },
@@ -660,6 +672,7 @@ const s = {
   historyRow:   { display: "flex", gap: 10, alignItems: "flex-start" },
   historyDot:   { width: 8, height: 8, borderRadius: "50%", background: "#a5b4fc", marginTop: 6, flexShrink: 0 },
   historyText:  { fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.5 },
+  historyRole:  { color: "#64748b", fontSize: 11, marginLeft: 6 },
   commentList: { display: "flex", flexDirection: "column", gap: 10, margin: "10px 0 14px" },
   commentCard: { background: "#f8fafc", borderRadius: 10, padding: "10px 12px" },
   commentHeader: { display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" },

@@ -45,7 +45,8 @@ function parseServerTimestamp(value) {
 
 function formatCommentDate(dateStr) {
   if (!dateStr) return "—";
-  const date = new Date(dateStr);
+  const timestamp = parseServerTimestamp(dateStr);
+  const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return dateStr;
   return date.toLocaleString("en-IN", {
     day: "numeric",
@@ -81,6 +82,7 @@ function defaultStyles() {
     sendButton: { background: "#6366f1", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700 },
     errorText: { color: "#dc2626", fontSize: 12, margin: "8px 0 0" },
     successText: { color: "#059669", fontSize: 12, fontWeight: 600, margin: "8px 0 0" },
+    deleteButton: { border: "none", background: "transparent", color: "#64748b", padding: 0, cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 700 },
     srOnly: { position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 },
   };
 }
@@ -106,6 +108,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [deletingId, setDeletingId] = useState(null);
   const fetchingRef = useRef(false);
 
   const fetchComments = useCallback(async ({ initial = false } = {}) => {
@@ -174,6 +177,29 @@ function TicketComments({ ticketId, role, styles = {} }) {
     }
   };
 
+  const deleteComment = async comment => {
+    if (!window.confirm("Delete this message?")) return;
+    setDeletingId(comment.id);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch(`${API}/tickets/${ticketId}/comments/${comment.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.detail || "Could not delete message.");
+        return;
+      }
+      setSuccess("Message deleted.");
+    } catch {
+      setError("Could not delete message. Please try again.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const heading = role === "Tenant" ? "Updates from your PM" : "Comments / Messages";
   const description = role === "Tenant"
     ? "Messages shared with you by your property team."
@@ -192,7 +218,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
         <div style={ui.commentList}>
           {comments.map(comment => {
             const scopeStyle = SCOPE_STYLES[comment.visible_to] || SCOPE_STYLES.all;
-            const author = comment.author_username || "Unknown user";
+            const author = comment.author_display_name || comment.author_username || "Unknown user";
             const unread = Number.isFinite(lastViewedAt)
               && comment.author_username !== currentUsername
               && parseServerTimestamp(comment.created_at) > lastViewedAt;
@@ -206,12 +232,22 @@ function TicketComments({ ticketId, role, styles = {} }) {
                   <div style={ui.commentHeaderText}>
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8, rowGap: 4, minWidth: 0 }}>
                       <strong style={{ ...ui.commentAuthor, ...(unread ? ui.unreadAuthor : {}), overflowWrap: "anywhere" }}>{author}</strong>
-                      <span style={{ ...ui.commentRole, marginLeft: 0, flexShrink: 0 }}>{comment.author_role}</span>
+                      <span style={{ ...ui.commentRole, marginLeft: 0, flexShrink: 0 }}>{comment.author_role || "User"}</span>
                     </div>
                     <div style={ui.commentMeta}>
                       <time dateTime={comment.created_at}>{formatCommentDate(comment.created_at)}</time>
                       {role !== "Tenant" && (
                         <span style={ui.visibilityBadge}>{VISIBILITY_LABELS[comment.visible_to] || comment.visible_to}</span>
+                      )}
+                      {comment.author_username === currentUsername && (
+                        <button
+                          type="button"
+                          style={ui.deleteButton}
+                          onClick={() => deleteComment(comment)}
+                          disabled={deletingId === comment.id}
+                        >
+                          {deletingId === comment.id ? "Deleting…" : "Delete"}
+                        </button>
                       )}
                     </div>
                   </div>

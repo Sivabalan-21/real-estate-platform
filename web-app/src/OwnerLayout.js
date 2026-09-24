@@ -16,6 +16,7 @@ function OwnerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const username = localStorage.getItem("username");
+  const displayName = localStorage.getItem("display_name") || username;
   const role = localStorage.getItem("role");
 
   // Guard: only an Owner should ever see this shell. Anyone else who lands here
@@ -76,7 +77,7 @@ function OwnerLayout() {
             {(username || "O")[0].toUpperCase()}
           </div>
           <div style={s.userInfo}>
-            <p style={s.userInfoName}>{username}</p>
+            <p style={s.userInfoName}>{displayName}</p>
             <p style={s.userInfoRole}>Owner</p>
           </div>
         </div>
@@ -95,8 +96,20 @@ function OwnerLayout() {
 }
 
 const s = {
-  shell:        { display: "flex", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: "#f8fafc" },
-  sidebar:      { width: 230, background: "#0f172a", display: "flex", flexDirection: "column", padding: "24px 16px" },
+  shell:        { display: "flex", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", background: "#f8fafc" },
+  sidebar: {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  width: 230,
+  height: "100vh",
+  boxSizing: "border-box",
+  background: "#0f172a",
+  display: "flex",
+  flexDirection: "column",
+  padding: "24px 16px",
+  zIndex: 1000,
+},
   brand:        { display: "flex", alignItems: "center", gap: 10, marginBottom: 36, paddingLeft: 8 },
   brandIcon:    { fontSize: 22, color: "#6366f1" },
   brandText:    { color: "#fff", fontSize: 18, fontWeight: 700, letterSpacing: 1 },
@@ -110,7 +123,12 @@ const s = {
   userInfoName: { margin: 0, fontSize: 13, color: "#fff", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   userInfoRole: { margin: "2px 0 0", fontSize: 11, color: "#94a3b8" },
   logoutBtn:    { background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "9px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 8 },
-  main:         { flex: 1, overflow: "auto" },
+  main: {
+  flex: 1,
+  minWidth: 0,
+  marginLeft: 230,
+  minHeight: "100vh",
+},
 };
 
 export default OwnerLayout;

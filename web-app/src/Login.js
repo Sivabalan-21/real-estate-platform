@@ -45,6 +45,7 @@ function Login() {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("role", payload.role);
         localStorage.setItem("username", payload.sub);
+        localStorage.setItem("display_name", data.full_name || payload.sub);
         localStorage.setItem("company_name", data.company_name || "");
         localStorage.setItem("company_slug", data.company_slug || "");
         localStorage.setItem("status", data.status || "active");

@@ -53,14 +53,12 @@ function PMUserManagement() {
           users.map((u) => (
             <div key={u.user_id} style={styles.card}>
               <div style={styles.header}>
-                <span style={styles.name}>{u.username}</span>
+                <span style={styles.name}>{u.full_name || u.username}</span>
                 <span style={styles.role}>{u.role}</span>
               </div>
 
               <p style={styles.email}>{u.email}</p>
-              <p style={styles.meta}>
-                Created By: {u.created_by} ({u.created_by_role || "PM"})
-              </p>
+              <p style={styles.meta}>Username: {u.username}</p>
 
               <div style={styles.actions}>
                 <button

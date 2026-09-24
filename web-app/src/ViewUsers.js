@@ -395,10 +395,11 @@ function ViewUsers() {
                   <td style={s.td}>
                     <div style={s.userCell}>
                       <div style={s.avatar}>
-                        {(u.username || u.email || "?")[0].toUpperCase()}
+                        {(u.full_name || u.username || u.email || "?")[0].toUpperCase()}
                       </div>
                       <div>
-                        <p style={s.userName}>{u.username || "—"}</p>
+                        <p style={s.userName}>{u.full_name || u.username || "—"}</p>
+                        <p style={s.userRole}>{u.role}</p>
                         <p style={s.userEmail}>{u.email}</p>
                       </div>
                     </div>

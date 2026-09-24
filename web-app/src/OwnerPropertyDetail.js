@@ -21,6 +21,16 @@ function OwnerPropertyDetail() {
   const [units, setUnits] = useState([]);
   const [unitsLoading, setUnitsLoading] = useState(true);
 
+  const formatUnitStatus = (unit) => {
+  const status = String(unit.status || "").toLowerCase();
+
+  if (status === "maintenance") return "Maintenance";
+  if (status === "occupied") return "Occupied";
+  if (status === "vacant") return "Vacant";
+
+  return unit.status || "Unknown";
+};
+
   // No single-property GET endpoint exists yet for the owner role — /owner/portfolio
   // already returns every property with the exact stats this page needs, so we
   // reuse it and pick out the one we want rather than adding a new backend route.
@@ -131,12 +141,24 @@ function OwnerPropertyDetail() {
             units.map((u) => (
               <div key={u.id} style={s.unitRow}>
                 <div>
-                  <p style={s.unitName}>{u.unit_number || u.name}</p>
-                  <p style={s.unitSub}>{u.status === "occupied" ? (u.tenant_name || "Occupied") : u.status}</p>
-                </div>
-                <span style={{ ...s.statusBadge, ...(s.statusColors[u.status] || s.statusColors.default) }}>
-                  {u.status}
-                </span>
+  <p style={s.unitName}>{u.unit_number || u.name}</p>
+
+  <p style={s.unitSub}>
+    {u.status === "occupied"
+      ? (u.tenant_name || "Occupied")
+      : formatUnitStatus(u)}
+  </p>
+</div>
+
+<span
+  style={{
+    ...s.statusBadge,
+    ...(s.statusColors[String(u.status || "").toLowerCase()] ||
+      s.statusColors.default),
+  }}
+>
+  {formatUnitStatus(u)}
+</span>
               </div>
             ))
           )}

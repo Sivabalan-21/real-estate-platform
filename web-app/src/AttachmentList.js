@@ -63,7 +63,7 @@ const styles = {
   info: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 },
   filename: { display: "block", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#334155", fontSize: 13, fontWeight: 700, textDecoration: "none" },
   meta: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#94a3b8", fontSize: 11 },
-  actions: { display: "flex", alignItems: "center", gap: 9, flexShrink: 0 },
+  actions: { display: "flex", alignItems: "center", gap: 9, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" },
   action: { color: "#4f46e5", fontSize: 11, fontWeight: 700, textDecoration: "none" },
   delete: { border: 0, background: "transparent", color: "#64748b", padding: 0, cursor: "pointer", font: "inherit", fontSize: 11, fontWeight: 700 },
   muted: { color: "#64748b", fontSize: 13 },

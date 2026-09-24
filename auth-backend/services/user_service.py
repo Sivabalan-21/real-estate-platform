@@ -59,6 +59,7 @@ def serialize_user(user: User):
         "id": user.id,
         "user_id": user.id,
         "username": user.username,
+        "full_name": user.full_name,
         "email": user.email,
         "role": user.role,
         "company_id": user.company_id,

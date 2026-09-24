@@ -7,16 +7,19 @@ sit flagged "maintenance" (shown to Owners as "Under Repair") forever after
 its ticket was closed or rejected, because nothing ever told it to revert.
 
 This file covers the fix: opening a ticket against a unit puts the unit
-into "maintenance" and remembers its prior status; resolving the ticket
-(closed or rejected) restores it -- but only once every open ticket on that
-unit is resolved, and without clobbering a status a PM set by hand with no
-ticket behind it.
+into "maintenance"; resolving the ticket (closed or rejected) restores it
+-- but only once every open ticket on that unit is resolved, without
+clobbering a status a PM set by hand with no ticket behind it, and based on
+the unit's *current* lease rather than a stale snapshot of its prior status
+(a snapshot taken when the ticket opened can go stale if the lease changes
+while repairs are in progress).
 
 Run with:  pytest tests/test_unit_status_ticket_sync.py -v
 """
 import uuid
+from datetime import date
 
-from models import Property, PropertyAssignment, Unit, User
+from models import Lease, Property, PropertyAssignment, Unit, User
 from rbac import ROLE_OWNER, ROLE_PROPERTY_MANAGER
 
 
@@ -50,6 +53,17 @@ def make_unit(db_session, property_, unit_number="A-101", status="occupied"):
     db_session.add(u)
     db_session.commit()
     return u
+
+
+def make_active_lease(db_session, property_, unit, tenant_username=None):
+    lease = Lease(
+        id=str(uuid.uuid4()), property_id=property_.id, unit_id=unit.id,
+        tenant_username=tenant_username, start_date=date(2026, 1, 1),
+        monthly_rent=1000.0, status="active",
+    )
+    db_session.add(lease)
+    db_session.commit()
+    return lease
 
 
 def assign_pm(db_session, property_, pm_username):
@@ -96,6 +110,7 @@ def test_closing_ticket_restores_prior_unit_status(db_session, company_a, pm_use
     assign_pm(db_session, prop, pm_user.username)
     owner = make_owner(db_session, company_a)
     unit = make_unit(db_session, prop, status="occupied")
+    make_active_lease(db_session, prop, unit)
 
     ticket = client_factory(pm_user).post(
         f"/properties/{prop.id}/maintenance-tickets",
@@ -134,6 +149,7 @@ def test_unit_stays_maintenance_while_a_second_ticket_is_still_open(
     assign_pm(db_session, prop, pm_user.username)
     owner = make_owner(db_session, company_a)
     unit = make_unit(db_session, prop, status="occupied")
+    make_active_lease(db_session, prop, unit)
 
     pm_client = client_factory(pm_user)
     ticket_a = pm_client.post(
@@ -161,6 +177,38 @@ def test_unit_stays_maintenance_while_a_second_ticket_is_still_open(
     approve_and_finish(client_factory(pm_user), client_factory(owner), ticket_b["id"], "closed")
     db_session.refresh(unit)
     assert unit.status == "occupied"
+    assert unit.pre_maintenance_status is None
+
+
+def test_closing_ticket_reflects_lease_ended_during_repair(
+    db_session, company_a, pm_user, client_factory
+):
+    # Regression test: the unit was occupied when the ticket opened, but the
+    # tenant's lease ends while repairs are in progress. Restoring the old
+    # "occupied" snapshot would be wrong here -- the unit must come out of
+    # "maintenance" as "vacant" because that's its real state right now.
+    prop = make_property(db_session, company_a, pm_user.username)
+    assign_pm(db_session, prop, pm_user.username)
+    owner = make_owner(db_session, company_a)
+    unit = make_unit(db_session, prop, status="occupied")
+    lease = make_active_lease(db_session, prop, unit)
+
+    ticket = client_factory(pm_user).post(
+        f"/properties/{prop.id}/maintenance-tickets",
+        json={"unit_id": unit.id, "title": "Leaking pipe"},
+    ).json()
+
+    db_session.refresh(unit)
+    assert unit.status == "maintenance"
+
+    lease.status = "ended"
+    db_session.add(lease)
+    db_session.commit()
+
+    approve_and_finish(client_factory(pm_user), client_factory(owner), ticket["id"], "closed")
+
+    db_session.refresh(unit)
+    assert unit.status == "vacant"
     assert unit.pre_maintenance_status is None
 
 

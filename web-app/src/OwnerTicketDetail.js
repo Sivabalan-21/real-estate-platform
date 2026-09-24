@@ -20,7 +20,10 @@ STATUS_LABELS.rejected = "Rejected";
 
 function dateValue(value) {
   if (!value) return "—";
-  const date = new Date(value);
+  const normalized = typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+    ? `${value}Z`
+    : value;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
@@ -151,7 +154,7 @@ function OwnerTicketDetail() {
         {ticket.history?.length ? ticket.history.map(entry => (
           <div key={entry.id || `${entry.changed_at}-${entry.to_status}`} style={s.historyRow}>
             <strong>{STATUS_LABELS[entry.to_status] || entry.to_status}</strong>
-            <span>{dateValue(entry.created_at || entry.changed_at)} · {entry.changed_by || "System"}</span>
+            <span><strong>{entry.changed_by_name || entry.changed_by || "System"}</strong> · {dateValue(entry.created_at || entry.changed_at)}</span>
             {entry.note && <p>{entry.note}</p>}
           </div>
         )) : <p style={s.muted}>No history available.</p>}

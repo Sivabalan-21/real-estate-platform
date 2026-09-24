@@ -160,6 +160,12 @@ class Unit(Base):
         nullable=False
     )  # vacant / occupied / maintenance
 
+    maintenance_tickets = relationship(
+        "MaintenanceTicket",
+        back_populates="unit",
+        lazy="selectin",
+    )
+
     # Set whenever a maintenance ticket auto-flips this unit's status to
     # "maintenance" (see services/ticket_service.py), so it can be restored
     # once every open ticket on the unit is resolved. Untouched by manual
@@ -168,7 +174,7 @@ class Unit(Base):
     # "Maintenance" by hand with no ticket behind it.
     pre_maintenance_status = Column(String, nullable=True)
 
-    rent_amount = Column(Float, nullable=True)
+    rent_amount = Column(Float, nullable=True) 
 
     created_at = Column(
         DateTime,
@@ -210,7 +216,7 @@ class MaintenanceTicket(Base):
     New code should read/write it via the `raised_by` property below.
 
     `status` stays lowercase (open/in_progress/closed) to match the Day 10
-    rows, the /owner/portfolio badge-count query, and the existing tests —
+    rows, the /owner/portfolio badge-count query,   and the existing tests —
     the Day 14 spec's 'Open' capitalisation is a display concern, not a
     stored-value one.
     """
@@ -277,7 +283,7 @@ class MaintenanceTicket(Base):
 
     company = relationship("Company")
     property = relationship("Property")
-    unit = relationship("Unit")
+    unit = relationship("Unit", back_populates="maintenance_tickets")
     assigned_pm_user = relationship("User", foreign_keys=[assigned_pm])
 
     attachments = relationship(
@@ -297,6 +303,8 @@ class MaintenanceTicket(Base):
         cascade="all, delete-orphan",
         order_by="TicketComment.created_at",
     )
+
+    
 
     # Day 14 spec calls this field `raised_by` — it's the same value as
     # `created_by` (whoever opened the ticket). No separate property here:

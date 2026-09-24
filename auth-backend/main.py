@@ -222,6 +222,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     token = create_access_token({
         "sub": user.username,
         "role": user.role,
+        "full_name": user.full_name,
         "company_id": user.company_id,
     })
 
@@ -232,6 +233,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         "company_slug": user.company.slug if user.company else None,
         "role":         user.role,
         "username":     user.username,
+        "full_name":    user.full_name,
         "status":       user.status,
     }
 
@@ -265,6 +267,7 @@ def get_users(db: Session = Depends(get_db)):
         result.append({
             "user_id": u.id,
             "username": u.username,
+            "full_name": u.full_name,
             "email": u.email,
             "role": u.role,
             "status": u.status,
@@ -348,6 +351,7 @@ def get_my_users(
         result.append({
             "user_id":      u.id,
             "username":     u.username,
+            "full_name":    u.full_name,
             "email":        u.email,
             "role":         u.role,
             "status":       u.status,
@@ -965,6 +969,24 @@ def serialize_property(prop: Property):
     }
 
 def serialize_unit(unit: Unit):
+    has_active_lease = (
+        unit.lease is not None and unit.lease.status == "active"
+    )
+
+    # The stored "maintenance" status should only be displayed while
+    # there is an active maintenance ticket for this unit.
+    has_active_maintenance = any(
+        ticket.status not in ("completed", "closed", "cancelled")
+        for ticket in unit.maintenance_tickets
+    )
+
+    if has_active_maintenance:
+        effective_status = "maintenance"
+    elif has_active_lease:
+        effective_status = "occupied"
+    else:
+        effective_status = "vacant"
+
     return {
         "id": unit.id,
         "property_id": unit.property_id,
@@ -974,11 +996,9 @@ def serialize_unit(unit: Unit):
         "baths": unit.baths,
         "sqft": unit.sqft,
         "floor": unit.floor,
-        "status": unit.status,
+        "status": effective_status,
         "rent_amount": unit.rent_amount,
-        "has_active_lease": (
-            unit.lease is not None and unit.lease.status == "active"
-        ),
+        "has_active_lease": has_active_lease,
     }
 
 @app.post(
@@ -1534,6 +1554,10 @@ def get_owner_portfolio(
 # tickets so the dashboard counts are real.
 
 def serialize_ticket(ticket: MaintenanceTicket):
+    assigned_pm_name = (
+        ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username
+        if ticket.assigned_pm_user else None
+    )
     return {
         "id": ticket.id,
         "company_id": ticket.company_id,
@@ -1549,6 +1573,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "created_by": ticket.created_by,
         "raised_by": ticket.created_by,
         "assigned_pm": ticket.assigned_pm,
+        "assigned_pm_name": assigned_pm_name,
         "assigned_vendor_id": ticket.assigned_vendor_id,
                 "rating": ticket.rating,
         "created_at": ticket.created_at,
@@ -1595,18 +1620,24 @@ def record_ticket_history(db: Session, ticket: MaintenanceTicket, from_status, t
     ))
 
 
-def serialize_ticket_history(history: TicketHistory):
+def serialize_ticket_history(history: TicketHistory, db: Session | None = None):
     """Full audit representation used by the ticket detail endpoint.
 
     `status`/`changed_at` aliases retain the M1 tenant timeline contract
     while the canonical fields expose the complete Day 24 audit record.
     """
+    actor = (
+        db.query(User).filter(User.username == history.changed_by).first()
+        if db and history.changed_by else None
+    )
     return {
         "id": history.id,
         "ticket_id": history.ticket_id,
         "from_status": history.from_status,
         "to_status": history.to_status,
         "changed_by": history.changed_by,
+        "changed_by_name": (actor.full_name or actor.username) if actor else history.changed_by,
+        "changed_by_role": actor.role if actor else None,
         "note": history.note,
         "created_at": history.created_at,
         "status": history.to_status,
@@ -1645,10 +1676,15 @@ def _authorize_ticket_access(
 
 
 def serialize_ticket_comment(comment: TicketComment):
+    author_display_name = (
+        comment.author_user.full_name or comment.author_user.username
+        if comment.author_user else comment.author_username
+    )
     return {
         "id": comment.id,
         "ticket_id": comment.ticket_id,
         "author_username": comment.author_username,
+        "author_display_name": author_display_name,
         "author_role": comment.author_role,
         "body": comment.body,
         "visible_to": comment.visible_to,
@@ -1717,6 +1753,36 @@ def get_ticket_comments(
         .all()
     )
     return [serialize_ticket_comment(comment) for comment in comments]
+
+
+@app.delete("/tickets/{ticket_id}/comments/{comment_id}")
+def delete_ticket_comment(
+    ticket_id: str,
+    comment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    _authorize_ticket_access(db, ticket, user)
+
+    comment = db.query(TicketComment).filter(
+        TicketComment.id == comment_id,
+        TicketComment.ticket_id == ticket_id,
+    ).first()
+    if not comment:
+        raise HTTPException(404, "Comment not found")
+    if comment.author_username != user.username:
+        raise HTTPException(403, "You can only delete your own messages")
+    if comment.created_at is None or (datetime.utcnow() - comment.created_at).total_seconds() > 4 * 60 * 60:
+        raise HTTPException(400, "Messages can only be deleted within 4 hours")
+
+    db.delete(comment)
+    db.commit()
+    return {"message": "Comment deleted"}
 
 
 @app.post("/properties/{property_id}/maintenance-tickets", status_code=201)
@@ -1910,6 +1976,7 @@ def create_ticket(
     db.add(ticket)
     db.flush()
     record_ticket_history(db, ticket, from_status=None, to_status="open", changed_by=user.username)
+    sync_unit_status_to_maintenance(db, ticket)
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
@@ -1964,7 +2031,7 @@ def get_ticket(
     # already set — internal audit fields (changed_by, PM notes) aren't
     # tenant-facing. Everyone else gets the full record.
     if user.role != ROLE_TENANT:
-        data["history"] = [serialize_ticket_history(h) for h in ticket.history]
+        data["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     if user.role == ROLE_OWNER:
         data["assigned_pm_name"] = (
             ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username
@@ -2016,7 +2083,7 @@ def transition_ticket_endpoint(
     db.commit()
     db.refresh(ticket)
     data_out = serialize_ticket(ticket)
-    data_out["history"] = [serialize_ticket_history(h) for h in ticket.history]
+    data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
 
 
@@ -2167,7 +2234,7 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     data = serialize_ticket(ticket)
 
     data["history"] = [
-        serialize_ticket_history(h)
+        serialize_ticket_history(h, db)
         for h in sorted(ticket.history, key=lambda h: h.created_at)
     ]
     # pm_notes was removed from serialize_ticket's base output (it was
