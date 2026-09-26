@@ -4,11 +4,6 @@ import TicketComments from "./TicketComments";
 
 const API = "http://localhost:8000";
 
-const CATEGORY_ICONS = {
-  Plumbing: "💧", Electrical: "⚡", HVAC: "❄️", Roof: "🏠",
-  Drywall: "🧱", Pest: "🐛", Appliance: "🔌", Other: "🔧",
-};
-
 function formatDate(dateStr) {
   if (!dateStr) return "—";
   const d = new Date(dateStr);
@@ -16,31 +11,44 @@ function formatDate(dateStr) {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-// Confirms an approve/reject decision, with an optional note that becomes
-// the TicketHistory audit row — same pattern as PMTicketDetail's transition
-// modal, so owners and PMs get a consistent way to leave a paper trail.
+function formatQuote(amount) {
+  if (amount == null) return "Not provided yet";
+  return `₹${Number(amount).toLocaleString("en-IN")}`;
+}
+
+// Confirms an approve/reject decision. The comment becomes an 'owner_pm'
+// scoped TicketComment (posted by the backend as part of the decision) —
+// it's optional on approve, but reject requires one so the PM never gets a
+// silent rejection with no idea what to fix.
 function DecisionModal({ decision, submitting, error, onCancel, onConfirm }) {
-  const [note, setNote] = useState("");
-  const isReject = decision.to === "rejected";
+  const [comment, setComment] = useState("");
+  const isReject = decision.action === "reject";
+  const trimmed = comment.trim();
+  const canConfirm = !submitting && (!isReject || trimmed.length > 0);
 
   return (
     <div style={s.modalOverlay} onClick={submitting ? undefined : onCancel}>
       <div style={s.modalCard} onClick={e => e.stopPropagation()}>
         <p style={s.modalTitle}>{isReject ? "Reject this request?" : "Approve this request?"}</p>
         <p style={s.modalSub}>
-          Ticket: <strong>{decision.ticket.title}</strong> · {decision.ticket.property_name || "—"}
-          {decision.ticket.unit_number ? ` · Unit ${decision.ticket.unit_number}` : ""}
+          Ticket: <strong>{decision.approval.title}</strong> · {decision.approval.property_name || "—"}
+          {decision.approval.unit_number ? ` · Unit ${decision.approval.unit_number}` : ""}
         </p>
-        <label style={s.modalLabel}>{isReject ? "Reason (optional but recommended)" : "Add note (optional)"}</label>
+        <label style={s.modalLabel}>
+          {isReject ? "Rejection reason (required)" : "Add comment (optional)"}
+        </label>
         <textarea
           style={s.textarea}
           rows={3}
-          value={note}
-          onChange={e => setNote(e.target.value)}
+          value={comment}
+          onChange={e => setComment(e.target.value)}
           placeholder={isReject ? "e.g. Quote is over budget, ask vendor to revise…" : "e.g. Approved, go ahead and schedule the work…"}
           disabled={submitting}
           autoFocus
         />
+        {isReject && !trimmed && (
+          <p style={s.hintText}>A reason is required so the PM knows what to do next.</p>
+        )}
         {error && <p style={s.errorText}>{error}</p>}
         <div style={s.modalActions}>
           <button style={s.modalCancelBtn} onClick={onCancel} disabled={submitting}>
@@ -48,8 +56,8 @@ function DecisionModal({ decision, submitting, error, onCancel, onConfirm }) {
           </button>
           <button
             style={isReject ? s.modalRejectBtn : s.modalApproveBtn}
-            onClick={() => onConfirm(note)}
-            disabled={submitting}
+            onClick={() => onConfirm(trimmed)}
+            disabled={!canConfirm}
           >
             {submitting ? "Saving…" : isReject ? "Reject" : "Approve"}
           </button>
@@ -70,11 +78,11 @@ function OwnerApprovals() {
   const focusTicketId = location.state?.ticketId || null;
   const focusedCardRef = useRef(null);
 
-  const [tickets, setTickets] = useState([]);
+  const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // { ticket, to: "approved" | "rejected" } while a decision is being
+  // { approval, action: "approve" | "reject" } while a decision is being
   // confirmed, else null.
   const [pendingDecision, setPendingDecision] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -84,7 +92,7 @@ function OwnerApprovals() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API}/owner/tickets?status=pending_owner_approval`, {
+      const res = await fetch(`${API}/owner/approvals`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -92,7 +100,7 @@ function OwnerApprovals() {
         setError(data.detail || "Could not load approvals");
         return;
       }
-      setTickets(data.tickets || []);
+      setApprovals(data.approvals || []);
     } catch {
       setError("Server error. Please try again.");
     } finally {
@@ -103,28 +111,31 @@ function OwnerApprovals() {
   useEffect(() => { fetchPending(); }, [fetchPending]);
 
   // Once the focused ticket's card is actually in the DOM, scroll it into
-  // view. Runs after every ticket-list update, not just on mount, since the
-  // fetch resolves asynchronously after the navigation state is already set.
+  // view. Runs after every list update, not just on mount, since the fetch
+  // resolves asynchronously after the navigation state is already set.
   useEffect(() => {
     if (focusTicketId && focusedCardRef.current) {
       focusedCardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [focusTicketId, tickets]);
+  }, [focusTicketId, approvals]);
 
-  const confirmDecision = async (note) => {
+  const confirmDecision = async (comment) => {
     if (!pendingDecision) return;
     setSubmitting(true);
     setDecisionError("");
     try {
-      const res = await fetch(`${API}/tickets/${pendingDecision.ticket.id}/transition`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ new_status: pendingDecision.to, note: note || null }),
-      });
+      const res = await fetch(
+        `${API}/tickets/${pendingDecision.approval.ticket_id}/${pendingDecision.action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ comment: comment || null }),
+        }
+      );
       const data = await res.json();
       if (res.ok) {
         // Decided tickets leave the pending-approval list immediately.
-        setTickets(prev => prev.filter(t => t.id !== pendingDecision.ticket.id));
+        setApprovals(prev => prev.filter(a => a.ticket_id !== pendingDecision.approval.ticket_id));
         setPendingDecision(null);
       } else {
         setDecisionError(data.detail || "Could not record this decision");
@@ -147,7 +158,7 @@ function OwnerApprovals() {
 
       {loading ? (
         <p style={s.muted}>Loading…</p>
-      ) : tickets.length === 0 ? (
+      ) : approvals.length === 0 ? (
         <div style={s.emptyState}>
           <p style={s.emptyIcon}>✅</p>
           <p style={s.emptyTitle}>Nothing waiting on you</p>
@@ -155,55 +166,59 @@ function OwnerApprovals() {
         </div>
       ) : (
         <div style={s.list}>
-          {tickets.map(t => {
-            const isFocused = t.id === focusTicketId;
+          {approvals.map(a => {
+            const isFocused = a.ticket_id === focusTicketId;
             return (
-            <div
-              key={t.id}
-              ref={isFocused ? focusedCardRef : null}
-              style={{ ...s.card, ...(isFocused ? s.cardFocused : {}) }}
-            >
-              <div style={s.cardTop}>
-                <span style={s.categoryIcon}>{CATEGORY_ICONS[t.category] || "🛠"}</span>
-                <div style={s.cardTopText}>
-                  <p style={s.cardTitle}>{t.title}</p>
-                  <p style={s.cardRef}>
-                    {t.property_name || "—"}{t.unit_number ? ` · Unit ${t.unit_number}` : ""} · {t.category || "—"}
-                  </p>
+              <div
+                key={a.ticket_id}
+                ref={isFocused ? focusedCardRef : null}
+                style={{ ...s.card, ...(isFocused ? s.cardFocused : {}) }}
+              >
+                <div style={s.cardTop}>
+                  <div style={s.cardTopText}>
+                    <p style={s.cardTitle}>{a.title}</p>
+                    <p style={s.cardRef}>
+                      {a.property_name || "—"}{a.unit_number ? ` · Unit ${a.unit_number}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    style={s.viewLink}
+                    onClick={() => navigate(`/owner/tickets`, { state: { propertyId: a.property_id, status: "active" } })}
+                  >
+                    View in Tickets →
+                  </button>
                 </div>
-                <button
-                  style={s.viewLink}
-                  onClick={() => navigate(`/owner/tickets`, { state: { propertyId: t.property_id, status: "active" } })}
-                >
-                  View in Tickets →
-                </button>
+
+                {a.description_summary && <p style={s.description}>{a.description_summary}</p>}
+
+                <div style={s.metaRow}>
+                  <span style={s.metaItem}><strong>PM:</strong> {a.pm_name || a.pm_username || "Unassigned"}</span>
+                  <span style={s.metaItem}><strong>Submitted:</strong> {formatDate(a.submitted_at)}</span>
+                  <span style={s.metaItem}><strong>Quote:</strong> {formatQuote(a.quote_amount)}</span>
+                  {a.quote_attachment_url && (
+                    <a style={s.quoteLink} href={a.quote_attachment_url} target="_blank" rel="noreferrer">
+                      View quote PDF
+                    </a>
+                  )}
+                </div>
+
+                <TicketComments ticketId={a.ticket_id} role="Owner" styles={s} />
+
+                <div style={s.actionRow}>
+                  <button
+                    style={s.approveBtn}
+                    onClick={() => { setDecisionError(""); setPendingDecision({ approval: a, action: "approve" }); }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    style={s.rejectBtn}
+                    onClick={() => { setDecisionError(""); setPendingDecision({ approval: a, action: "reject" }); }}
+                  >
+                    Reject
+                  </button>
+                </div>
               </div>
-
-              {t.description && <p style={s.description}>{t.description}</p>}
-
-              <div style={s.metaRow}>
-                <span style={s.metaItem}><strong>PM:</strong> {t.assigned_pm_name || t.assigned_pm || "Unassigned"}</span>
-                <span style={s.metaItem}><strong>Submitted:</strong> {formatDate(t.created_at)}</span>
-                <span style={s.metaItem}><strong>Quote:</strong> {t.quote_amount != null ? t.quote_amount : "Not provided yet"}</span>
-              </div>
-
-              <TicketComments ticketId={t.id} role="Owner" styles={s} />
-
-              <div style={s.actionRow}>
-                <button
-                  style={s.approveBtn}
-                  onClick={() => { setDecisionError(""); setPendingDecision({ ticket: t, to: "approved" }); }}
-                >
-                  Approve
-                </button>
-                <button
-                  style={s.rejectBtn}
-                  onClick={() => { setDecisionError(""); setPendingDecision({ ticket: t, to: "rejected" }); }}
-                >
-                  Reject
-                </button>
-              </div>
-            </div>
             );
           })}
         </div>
@@ -229,6 +244,7 @@ const s = {
   subtitle:  { margin: "4px 0 0", fontSize: 13, color: "#64748b" },
 
   errorText: { color: "#ef4444", fontSize: 13, marginBottom: 16 },
+  hintText:  { color: "#b45309", fontSize: 12, margin: "6px 0 0" },
   muted:     { color: "#64748b", fontSize: 14 },
 
   emptyState: { textAlign: "center", padding: "60px 20px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14 },
@@ -241,7 +257,6 @@ const s = {
   cardFocused: { border: "1px solid #6366f1", boxShadow: "0 0 0 3px #e0e7ff" },
 
   cardTop:     { display: "flex", alignItems: "flex-start", gap: 12 },
-  categoryIcon:{ fontSize: 24 },
   cardTopText: { flex: 1 },
   cardTitle:   { margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" },
   cardRef:     { margin: "2px 0 0", fontSize: 12, color: "#94a3b8" },
@@ -249,8 +264,10 @@ const s = {
 
   description: { fontSize: 13, color: "#334155", lineHeight: 1.5, margin: "12px 0 0" },
 
-  metaRow:  { display: "flex", gap: 18, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid #f1f5f9" },
-  metaItem: { fontSize: 12, color: "#64748b" },
+  metaRow:   { display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid #f1f5f9" },
+  metaItem:  { fontSize: 12, color: "#64748b" },
+  quoteLink: { fontSize: 12, color: "#6366f1", fontWeight: 600, textDecoration: "none" },
+
   section: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #f1f5f9" },
   sectionLabel: { fontSize: 12, color: "#0f172a", fontWeight: 700, margin: "0 0 4px" },
   sectionSub: { fontSize: 12, color: "#94a3b8", margin: "0 0 10px" },

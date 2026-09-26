@@ -36,6 +36,7 @@ from schemas import (
     TicketCreate,
     TicketTransitionRequest,
     TicketCommentCreate,
+    OwnerApprovalDecision,
 )
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
@@ -2518,7 +2519,7 @@ async def upload_ticket_attachments(
 
     contents_by_file = []
     for f in files:
-        allowed_types = ALLOWED_PM_ATTACHMENT_TYPES if attachment_type == "pm_note" else ALLOWED_PHOTO_TYPES
+        allowed_types = ALLOWED_PM_ATTACHMENT_TYPES if attachment_type in ("pm_note", "quote") else ALLOWED_PHOTO_TYPES
         if f.content_type not in allowed_types:
             raise HTTPException(400, f"'{f.filename}' is not a supported attachment type")
         data = await f.read()
@@ -2793,3 +2794,134 @@ def update_me(data: dict, db=Depends(get_db), user=Depends(current_user)):
         "full_name": user.full_name,
         "phone":     user.phone,
     }
+# ---- Owner approval inbox (Day 29) ----
+
+def _latest_quote_attachment(ticket: MaintenanceTicket):
+    quote_attachments = [a for a in ticket.attachments if a.type == "quote"]
+    if not quote_attachments:
+        return None
+    return max(quote_attachments, key=lambda a: a.uploaded_at)
+
+
+def _pending_approval_submitted_at(ticket: MaintenanceTicket):
+    for h in reversed(ticket.history):
+        if h.to_status == OWNER_APPROVAL_STATUS:
+            return h.created_at
+    return ticket.updated_at
+
+
+def serialize_owner_approval(ticket: MaintenanceTicket):
+    assigned_pm_name = (
+        (ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username)
+        if ticket.assigned_pm_user else None
+    )
+    latest_quote = _latest_quote_attachment(ticket)
+    description = (ticket.description or "").strip()
+    description_summary = description[:160] + ("…" if len(description) > 160 else "")
+
+    return {
+        "ticket_id": ticket.id,
+        "title": ticket.title,
+        "property_id": ticket.property_id,
+        "property_name": ticket.property.name if ticket.property else None,
+        "unit_id": ticket.unit_id,
+        "unit_number": ticket.unit.unit_number if ticket.unit else None,
+        "pm_username": ticket.assigned_pm,
+        "pm_name": assigned_pm_name,
+        "description_summary": description_summary,
+        "quote_amount": ticket.quote_amount,
+        "quote_attachment_url": latest_quote.url if latest_quote else None,
+        "submitted_at": _pending_approval_submitted_at(ticket),
+    }
+
+
+@app.get("/owner/approvals")
+def get_owner_approvals(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role != ROLE_OWNER:
+        raise HTTPException(403, "Not authorized")
+
+    tickets = (
+        db.query(MaintenanceTicket)
+        .filter(
+            MaintenanceTicket.company_id == user.company_id,
+            MaintenanceTicket.status == OWNER_APPROVAL_STATUS,
+        )
+        .order_by(MaintenanceTicket.updated_at.asc())
+        .all()
+    )
+
+    return {
+        "approvals": [serialize_owner_approval(t) for t in tickets],
+        "count": len(tickets),
+    }
+
+
+def _resolve_owner_approval_ticket(db: Session, ticket_id: str, user: User) -> MaintenanceTicket:
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if user.role != ROLE_OWNER:
+        raise HTTPException(403, "Only an Owner can decide this ticket")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized for this ticket")
+    if ticket.status != OWNER_APPROVAL_STATUS:
+        raise HTTPException(400, "Ticket is not awaiting owner approval")
+    return ticket
+
+
+def _post_owner_pm_comment(db: Session, ticket: MaintenanceTicket, user: User, body: str) -> None:
+    db.add(TicketComment(
+        ticket_id=ticket.id,
+        author_username=user.username,
+        author_role=user.role,
+        body=body,
+        visible_to="owner_pm",
+    ))
+
+
+@app.post("/tickets/{ticket_id}/approve")
+def approve_ticket(
+    ticket_id: str,
+    data: OwnerApprovalDecision,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = _resolve_owner_approval_ticket(db, ticket_id, user)
+
+    comment_body = (data.comment or "").strip()
+    if comment_body:
+        _post_owner_pm_comment(db, ticket, user, comment_body)
+
+    transition_ticket(db, ticket, "approved", user, comment_body or None)
+    db.commit()
+    db.refresh(ticket)
+
+    data_out = serialize_ticket(ticket)
+    data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
+    return data_out
+
+
+@app.post("/tickets/{ticket_id}/reject")
+def reject_ticket(
+    ticket_id: str,
+    data: OwnerApprovalDecision,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    ticket = _resolve_owner_approval_ticket(db, ticket_id, user)
+
+    comment_body = (data.comment or "").strip()
+    if not comment_body:
+        raise HTTPException(400, "Rejection reason required")
+
+    _post_owner_pm_comment(db, ticket, user, comment_body)
+    transition_ticket(db, ticket, "rejected", user, comment_body)
+    db.commit()
+    db.refresh(ticket)
+
+    data_out = serialize_ticket(ticket)
+    data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
+    return data_out

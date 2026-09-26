@@ -1,5 +1,10 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
+
+const API = "http://localhost:8000";
+// Poll interval for the Approvals nav badge — cheap enough to just refetch
+// on a timer rather than plumb a shared store through every owner page.
+const APPROVALS_BADGE_POLL_MS = 30000;
 
 // Where each role's own dashboard lives — used to bounce a mismatched role
 // away from the Owner shell instead of rendering it for the wrong user.
@@ -18,6 +23,7 @@ function OwnerLayout() {
   const username = localStorage.getItem("username");
   const displayName = localStorage.getItem("display_name") || username;
   const role = localStorage.getItem("role");
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
 
   // Guard: only an Owner should ever see this shell. Anyone else who lands here
   // (stale link, typed URL, etc.) gets bounced to their own dashboard instead
@@ -27,6 +33,33 @@ function OwnerLayout() {
       navigate(ROLE_HOME[role] || "/", { replace: true });
     }
   }, [role, navigate]);
+
+  // Nav badge for the Approvals item — polled independently of whichever
+  // owner page is currently mounted, and refreshed whenever the owner
+  // navigates (e.g. right after approving/rejecting a ticket elsewhere)
+  // so the count doesn't go stale until the next 30s tick.
+  useEffect(() => {
+    if (role !== "Owner") return;
+    const token = localStorage.getItem("token");
+    let cancelled = false;
+
+    const fetchCount = async () => {
+      try {
+        const res = await fetch(`${API}/owner/approvals`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPendingApprovalCount(data.count || 0);
+      } catch {
+        // Silent — a stale/missing badge count isn't worth surfacing an error for.
+      }
+    };
+
+    fetchCount();
+    const intervalId = window.setInterval(fetchCount, APPROVALS_BADGE_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(intervalId); };
+  }, [role, location.pathname]);
 
   const logout = () => {
     const slug = localStorage.getItem("company_slug");
@@ -58,6 +91,7 @@ function OwnerLayout() {
         <nav style={s.nav}>
           {NAV.map(n => {
             const active = location.pathname === n.path;
+            const showBadge = n.path === "/owner/approvals" && pendingApprovalCount > 0;
             return (
               <div
                 key={n.path}
@@ -65,7 +99,10 @@ function OwnerLayout() {
                 onClick={() => navigate(n.path)}
               >
                 <span style={s.navIcon}>{n.icon}</span>
-                <span>{n.label}</span>
+                <span style={s.navLabel}>{n.label}</span>
+                {showBadge && (
+                  <span style={s.navBadge}>{pendingApprovalCount > 99 ? "99+" : pendingApprovalCount}</span>
+                )}
               </div>
             );
           })}
@@ -117,6 +154,8 @@ const s = {
   navItem:      { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, color: "#94a3b8", cursor: "pointer", fontSize: 14, fontWeight: 500 },
   navActive:    { background: "#1e293b", color: "#fff" },
   navIcon:      { fontSize: 16 },
+  navLabel:     { flex: 1 },
+  navBadge:     { background: "#dc2626", color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "1px 7px", minWidth: 18, textAlign: "center", lineHeight: "16px" },
   sidebarUser:  { display: "flex", alignItems: "center", gap: 10, padding: "12px 8px", marginBottom: 8 },
   userAvatar:   { width: 32, height: 32, borderRadius: "50%", background: "#1e3a5f", color: "#7dd3fc", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, flexShrink: 0 },
   userInfo:     { overflow: "hidden" },

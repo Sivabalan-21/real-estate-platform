@@ -199,3 +199,12 @@ class TicketAttachmentResponse(BaseModel):
 class TicketCommentCreate(BaseModel):
     body: str
     visible_to: str = "all"
+
+class OwnerApprovalDecision(BaseModel):
+    """Body for POST /tickets/{id}/approve and /reject.
+
+    `comment` is optional on approve, but the endpoint enforces it as
+    mandatory on reject — that check lives in main.py rather than here so
+    the 400 response can carry the exact message the spec calls for.
+    """
+    comment: Optional[str] = None

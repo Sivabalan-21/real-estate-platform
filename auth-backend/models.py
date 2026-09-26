@@ -272,6 +272,11 @@ class MaintenanceTicket(Base):
 
     rating = Column(Integer, nullable=True)  # tenant's 1-5 rating after closure
 
+    # Day 29 owner-approval inbox: the amount the Owner is being asked to
+    # sign off on. Nullable — falls back to whatever the latest "quote"
+    # attachment shows (see _latest_quote_attachment in main.py) when unset.
+    quote_amount = Column(Float, nullable=True)
+
     # Day 17: internal PM-facing note, single text field for now. Real
     # threaded ticket_comments with visible_to scoping (owner_pm vs tenant)
     # lands Month 2 / Day 27 per the spec — this is the interim shape.
