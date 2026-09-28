@@ -43,7 +43,7 @@ const ACTIVE_PRIORITY_STATUSES = new Set([
 // this list only decides which buttons a PM is offered.
 const TICKET_ACTIONS = {
   open: [{ to: "pm_review", label: "Start Review" }],
-  pm_review: [{ to: "quote_requested", label: "Request Quote from Vendor" }],
+  // pm_review -> quote_requested happens via "Assign Vendor" below (needs a vendor + emails them).
   quote_received: [{ to: "pending_owner_approval", label: "Submit to Owner for Approval" }],
   approved: [{ to: "in_progress", label: "Begin Work" }],
   in_progress: [{ to: "completed", label: "Mark Completed" }],
@@ -178,6 +178,7 @@ function PMTicketDetail() {
   const [vendorSelection, setVendorSelection] = useState("");
   const [vendorSaving, setVendorSaving] = useState(false);
   const [vendorError, setVendorError] = useState("");
+  const [vendorNotice, setVendorNotice] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [attachmentToDelete, setAttachmentToDelete] = useState(null);
@@ -267,14 +268,19 @@ function PMTicketDetail() {
     }
   };
 
-  const saveVendor = async () => {
+  const assignVendor = async () => {
+    if (!vendorSelection) {
+      setVendorError("Select a vendor first");
+      return;
+    }
     setVendorSaving(true);
     setVendorError("");
+    setVendorNotice("");
     try {
       const res = await fetch(`${API}/tickets/${id}/assign-vendor`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ vendor_id: vendorSelection || null }),
+        body: JSON.stringify({ vendor_id: vendorSelection }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -282,6 +288,11 @@ function PMTicketDetail() {
         return;
       }
       setTicket(data);
+      setVendorNotice(
+        data.vendor_email_sent
+          ? "Vendor assigned and notified by email."
+          : "Vendor assigned, but the notification email could not be sent."
+      );
     } catch {
       setVendorError("Server error. Please try again.");
     } finally {
@@ -494,17 +505,42 @@ function PMTicketDetail() {
         </div>
 
         <div style={s.section}>
-          <p style={s.sectionLabel}>Assign Vendor</p>
-          {ticket.assigned_vendor_id && <p style={s.assignedVendor}>Currently assigned: {ticket.assigned_vendor?.name || ticket.assigned_vendor_id}</p>}
-          {vendors.length === 0 ? <p style={s.muted}>No vendors yet</p> : (
+          <p style={s.sectionLabel}>Vendor</p>
+          {ticket.assigned_vendor ? (
+            <div style={s.tenantCard}>
+              <p style={s.tenantName}>{ticket.assigned_vendor.name}</p>
+              {ticket.assigned_vendor.phone ? (
+                <a href={`tel:${ticket.assigned_vendor.phone}`} style={s.tenantLink}>{ticket.assigned_vendor.phone}</a>
+              ) : (
+                <p style={s.tenantMeta}>No phone on file</p>
+              )}
+              {ticket.assigned_vendor.email && <p style={s.tenantMeta}>{ticket.assigned_vendor.email}</p>}
+            </div>
+          ) : ticket.status !== "pm_review" ? (
+            <p style={s.muted} title="Assign vendor after reviewing the ticket">
+              Assign vendor after reviewing the ticket
+            </p>
+          ) : vendors.length === 0 ? (
+            <p style={s.muted}>No vendors yet. Add one in the Vendor Directory.</p>
+          ) : (
             <div style={s.vendorRow}>
-              <select style={s.vendorSelect} value={vendorSelection} onChange={e => setVendorSelection(e.target.value)}>
+              <select
+                style={s.vendorSelect}
+                value={vendorSelection}
+                onChange={e => setVendorSelection(e.target.value)}
+                disabled={vendorSaving}
+              >
                 <option value="">Select a vendor</option>
-                {vendors.map(v => <option key={v.id} value={v.id}>{v.name || v.full_name || v.id}</option>)}
+                {vendors.map(v => (
+                  <option key={v.id} value={v.id}>{v.name} ({v.category})</option>
+                ))}
               </select>
-              <button style={s.saveNoteBtn} onClick={saveVendor} disabled={vendorSaving}>{vendorSaving ? "Saving…" : "Save Vendor"}</button>
+              <button style={s.saveNoteBtn} onClick={assignVendor} disabled={vendorSaving || !vendorSelection}>
+                {vendorSaving ? "Assigning..." : "Assign"}
+              </button>
             </div>
           )}
+          {vendorNotice && <p style={s.savedHint}>{vendorNotice}</p>}
           {vendorError && <p style={s.errorText}>{vendorError}</p>}
         </div>
 
@@ -524,7 +560,7 @@ function PMTicketDetail() {
               ))}
             </div>
           ) : ticket.status === "quote_requested" ? (
-            <p style={s.muted}>Waiting on the vendor quote before this can move forward.</p>
+            <p style={s.muted}>Waiting on the vendor quote.</p>
           ) : ticket.status === "pending_owner_approval" ? (
             <p style={s.muted}>Waiting on the owner's decision.</p>
           ) : (

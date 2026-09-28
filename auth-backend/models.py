@@ -60,6 +60,33 @@ class Vendor(Base):
     tickets = relationship("MaintenanceTicket", back_populates="assigned_vendor")
 
 
+class VendorTicketAccess(Base):
+    """Secure, expiring link that lets a vendor (no account) see ONE ticket.
+
+    One row per (ticket, vendor) assignment. The token is what goes in the
+    emailed /vendor-access/:token link; it is scoped to exactly one ticket, so
+    a vendor can never browse other tickets or properties.
+    """
+    __tablename__ = "vendor_ticket_access"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+    token = Column(String, unique=True, nullable=False, index=True)
+    vendor_id = Column(String, ForeignKey("vendors.id"), nullable=False, index=True)
+    ticket_id = Column(
+        String,
+        ForeignKey("maintenance_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    expires_at = Column(DateTime, nullable=False)
+    revoked = Column(Boolean, default=False, nullable=False)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    vendor = relationship("Vendor")
+    ticket = relationship("MaintenanceTicket")
+
+
 class User(Base):
     __tablename__ = "users"
 

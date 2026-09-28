@@ -227,3 +227,8 @@ class VendorUpdate(BaseModel):
     website: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class AssignVendorRequest(BaseModel):
+    vendor_id: str
+    note: Optional[str] = None

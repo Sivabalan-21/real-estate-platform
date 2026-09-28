@@ -15,7 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory, VendorTicketAccess
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
@@ -39,6 +39,7 @@ from schemas import (
     OwnerApprovalDecision,
     VendorCreate,
     VendorUpdate,
+    AssignVendorRequest,
 )
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
@@ -55,7 +56,7 @@ from services.user_service import (
     update_user as update_user_service,
     visible_users,
 )
-from tokens import ALGORITHM, SECRET_KEY, create_access_token, create_reset_token, is_token_expired
+from tokens import ALGORITHM, SECRET_KEY, create_access_token, create_reset_token, create_vendor_access_token, is_token_expired
 import shutil
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -186,6 +187,29 @@ Regards,
 Property Portal Team
 """
     await send_email(email, subject, body)
+
+
+async def send_vendor_assignment_email(vendor: Vendor, ticket: MaintenanceTicket, link: str):
+    """Notify a vendor about a new job. Best-effort: the caller swallows
+    failures so a mail outage never blocks the assignment itself."""
+    subject = f"New maintenance job: {ticket.title or ticket.category or 'Maintenance request'}"
+    location = ticket.property.name if ticket.property else "the property"
+    if ticket.unit:
+        location += f", Unit {ticket.unit.unit_number}"
+    body = f"""
+Hi {vendor.name},
+
+You've been assigned a maintenance job at {location}.
+
+Click here to view details and submit your quote:
+{link}
+
+This link is private to you and expires in 7 days. Please do not share it.
+
+Regards,
+Property Portal Team
+"""
+    await send_email(vendor.email, subject, body)
 
 
 @app.get("/")
@@ -2271,9 +2295,16 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
         ticket.assigned_pm_user.full_name or ticket.assigned_pm_user.username
         if ticket.assigned_pm_user else None
     )
+    vendor = ticket.assigned_vendor
     data["assigned_vendor"] = (
-        {"id": ticket.assigned_vendor_id, "name": ticket.assigned_vendor_id}
-        if ticket.assigned_vendor_id else None
+        {
+            "id": vendor.id,
+            "name": vendor.name,
+            "phone": vendor.phone,
+            "email": vendor.email,
+            "category": vendor.category,
+        }
+        if vendor else None
     )
     data["sla_target"] = "24 hours from ticket creation" if ticket.priority == "urgent" else None
 
@@ -2398,12 +2429,14 @@ def delete_vendor(
 
 
 @app.post("/tickets/{ticket_id}/assign-vendor")
-def assign_ticket_vendor(
+async def assign_ticket_vendor(
     ticket_id: str,
-    data: dict,
+    data: AssignVendorRequest,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
+    """Assign a vendor, move the ticket pm_review -> quote_requested, mint a
+    7-day single-ticket access token and email the vendor the portal link."""
     if user.role != ROLE_PROPERTY_MANAGER:
         raise HTTPException(403, "Not authorized")
 
@@ -2413,23 +2446,46 @@ def assign_ticket_vendor(
     ).first()
     if not ticket:
         raise HTTPException(404, "Ticket not found")
-    if ticket.property_id not in _pm_assigned_property_ids(db, user.username):
+    if not _pm_can_manage_property(db, user.username, ticket.property_id):
         raise HTTPException(403, "Not authorized for this ticket")
 
-    vendor_id = data.get("vendor_id")
-    if vendor_id is not None and not isinstance(vendor_id, str):
-        raise HTTPException(400, "vendor_id must be a string or null")
-    if vendor_id:
-        vendor = db.query(Vendor).filter(
-            Vendor.id == vendor_id, Vendor.company_id == user.company_id, Vendor.is_active == True
-        ).first()
-        if not vendor:
-            raise HTTPException(400, "Invalid or inactive vendor")
-    ticket.assigned_vendor_id = vendor_id or None
-    ticket.updated_at = datetime.utcnow()
+    if ticket.status != "pm_review":
+        raise HTTPException(400, "Vendor can only be assigned while the ticket is in PM Review")
+
+    vendor = db.query(Vendor).filter(Vendor.id == data.vendor_id).first()
+    if not vendor or vendor.company_id != ticket.company_id or not vendor.is_active:
+        raise HTTPException(400, "Invalid vendor: must be an active vendor in your company")
+
+    ticket.assigned_vendor_id = vendor.id
+    transition_ticket(
+        db, ticket, "quote_requested", user,
+        data.note or f"Vendor assigned: {vendor.name}",
+    )
+
+    token, expires_at = create_vendor_access_token()
+    db.add(VendorTicketAccess(
+        token=token,
+        vendor_id=vendor.id,
+        ticket_id=ticket.id,
+        expires_at=expires_at,
+        created_by=user.username,
+    ))
     db.commit()
     db.refresh(ticket)
-    return serialize_pm_ticket_detail(ticket, db)
+
+    # Email after commit: the assignment is already durable, so a mail
+    # failure must not roll it back.
+    email_sent = False
+    if vendor.email:
+        try:
+            await send_vendor_assignment_email(vendor, ticket, f"{FRONTEND_URL}/vendor-access/{token}")
+            email_sent = True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[assign-vendor] email to {vendor.email} failed: {exc}")
+
+    out = serialize_pm_ticket_detail(ticket, db)
+    out["vendor_email_sent"] = email_sent
+    return out
 
 
 @app.patch("/pm/tickets/{ticket_id}")
