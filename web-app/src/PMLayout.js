@@ -37,6 +37,7 @@ function PMLayout() {
     { icon: "🏢", label: "Properties", path: "/pm/properties" },
     { icon: "🏠", label: "Tenants",    path: "/pm/users/view" },
     { icon: "🛠️", label: "Tickets",    path: "/pm/tickets" },
+    { icon: "🔧", label: "Vendors",    path: "/pm/vendors" },
   ];
 
   if (role && role !== "Property Manager") return null; // redirect effect above is already firing

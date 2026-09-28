@@ -43,6 +43,7 @@ import TenantPayments from "./TenantPayments";
 
 import VendorLayout from "./VendorLayout";
 import VendorDashboard from "./VendorDashboard";
+import VendorDirectory from './VendorDirectory';
 
 // Blocks access to a role-specific route group before it renders, instead
 // of letting the page mount and show an empty/wrong state to the wrong
@@ -106,6 +107,7 @@ function App() {
           <Route path="users/view"             element={<ViewUsers />} />
           <Route path="tickets"                element={<PMTickets />} />
           <Route path="tickets/:id"            element={<PMTicketDetail />} />
+          <Route path="vendors"                element={<VendorDirectory />} />
         </Route>
 
         {/* ── OWNER ────────────────────────────────────────── */}
@@ -129,8 +131,9 @@ function App() {
         </Route>
 
         <Route path="/vendor" element={<RequireRole allowed={["Vendor"]}><VendorLayout /></RequireRole>}>
-  <Route path="dashboard" element={<VendorDashboard />} />
-</Route>
+          <Route path="dashboard" element={<VendorDashboard />} />
+          <Route path="directory" element={<VendorDirectory />} />
+        </Route>
 
       </Routes>
     </Router>
