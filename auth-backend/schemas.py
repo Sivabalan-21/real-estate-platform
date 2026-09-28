@@ -208,3 +208,22 @@ class OwnerApprovalDecision(BaseModel):
     the 400 response can carry the exact message the spec calls for.
     """
     comment: Optional[str] = None
+
+
+class VendorCreate(BaseModel):
+    name: str
+    category: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class VendorUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None

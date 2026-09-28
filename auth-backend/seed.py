@@ -27,6 +27,7 @@ from models import (
     Lease,
     MaintenanceTicket,
     PropertyAssignment,
+    Vendor,
 )
 from rbac import (
     ROLE_OWNER,
@@ -280,6 +281,30 @@ def seed(db):
     make_ticket(oak, oak_104, "AC unit not cooling", "HVAC", "in_progress", "high", pm1.username, created_by=tenant2.username)
     make_ticket(maple, map_201, "Bedroom light fixture flickering", "Electrical", "closed", "low", pm2.username, created_by=tenant3.username, closed_at=datetime.utcnow())
     make_ticket(maple, map_204, "Pest sighting in hallway", "Pest", "open", "urgent", pm2.username, created_by=tenant3.username)
+
+    # ---- Vendors (4 per company, one per common category) --------------
+    def make_vendor(name, category, phone, email, avg_rating, total_jobs):
+        vendor, created = get_or_create(
+            db,
+            Vendor,
+            name=name,
+            company_id=company.id,
+            defaults={
+                "category": category,
+                "phone": phone,
+                "email": email,
+                "avg_rating": avg_rating,
+                "total_jobs": total_jobs,
+                "is_active": True,
+            },
+        )
+        created_summary.append(("Vendor", name, created))
+        return vendor
+
+    make_vendor("Reliable Plumbing Co.", "Plumbing", "555-0101", "dispatch@reliableplumbing.example", 4.6, 12)
+    make_vendor("BrightSpark Electrical", "Electrical", "555-0102", "office@brightspark.example", 4.8, 9)
+    make_vendor("ClimateRight HVAC", "HVAC", "555-0103", "service@climateright.example", 4.4, 15)
+    make_vendor("AllFix General Contracting", "General", "555-0104", "info@allfix.example", 4.5, 20)
 
     db.commit()
     return created_summary

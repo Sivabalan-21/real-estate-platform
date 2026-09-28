@@ -15,7 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
@@ -37,6 +37,8 @@ from schemas import (
     TicketTransitionRequest,
     TicketCommentCreate,
     OwnerApprovalDecision,
+    VendorCreate,
+    VendorUpdate,
 )
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
@@ -967,6 +969,21 @@ def serialize_property(prop: Property):
             for d in prop.dimensions
         ],
         "assigned_pms": [a.pm_username for a in prop.assignments],
+    }
+def serialize_vendor(vendor: Vendor):
+    return {
+        "id": vendor.id,
+        "company_id": vendor.company_id,
+        "name": vendor.name,
+        "category": vendor.category,
+        "phone": vendor.phone,
+        "email": vendor.email,
+        "website": vendor.website,
+        "notes": vendor.notes,
+        "avg_rating": vendor.avg_rating,
+        "total_jobs": vendor.total_jobs,
+        "is_active": vendor.is_active,
+        "created_at": str(vendor.created_at) if vendor.created_at else None,
     }
 
 def serialize_unit(unit: Unit):
@@ -2279,15 +2296,105 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     return data
 
 
-@app.get("/vendors")
-def get_vendors(
+@app.post("/vendors", status_code=201)
+def create_vendor(
+    data: VendorCreate,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    """Vendor records are not modeled yet; keep the route stable for PM UI."""
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Not authorized to create vendors")
+    if not user.company_id:
+        raise HTTPException(400, "User has no associated company")
+    if data.category not in VendorCategory.ALL:
+        raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
+
+    vendor = Vendor(
+        company_id=user.company_id,
+        name=data.name,
+        category=data.category,
+        phone=data.phone,
+        email=data.email,
+        website=data.website,
+        notes=data.notes,
+    )
+    db.add(vendor)
+    db.commit()
+    db.refresh(vendor)
+    return serialize_vendor(vendor)
+
+
+@app.get("/vendors")
+def get_vendors(
+    category: str | None = None,
+    is_active: bool | None = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
     if not user.company_id:
         raise HTTPException(403, "Not authorized")
-    return []
+
+    query = db.query(Vendor).filter(Vendor.company_id == user.company_id)
+
+    if category is not None:
+        if category not in VendorCategory.ALL:
+            raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
+        query = query.filter(Vendor.category == category)
+
+    if is_active is not None:
+        query = query.filter(Vendor.is_active == is_active)
+
+    vendors = query.order_by(Vendor.name).all()
+    return [serialize_vendor(v) for v in vendors]
+
+
+@app.put("/vendors/{vendor_id}")
+def update_vendor(
+    vendor_id: str,
+    data: VendorUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Not authorized")
+
+    vendor = db.query(Vendor).filter(
+        Vendor.id == vendor_id, Vendor.company_id == user.company_id
+    ).first()
+    if not vendor:
+        raise HTTPException(404, "Vendor not found")
+
+    if data.category is not None and data.category not in VendorCategory.ALL:
+        raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
+
+    for field in ("name", "category", "phone", "email", "website", "notes", "is_active"):
+        value = getattr(data, field)
+        if value is not None:
+            setattr(vendor, field, value)
+
+    db.commit()
+    db.refresh(vendor)
+    return serialize_vendor(vendor)
+
+
+@app.delete("/vendors/{vendor_id}")
+def delete_vendor(
+    vendor_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_ADMIN, ROLE_SUPER_ADMIN):
+        raise HTTPException(403, "Not authorized")
+
+    vendor = db.query(Vendor).filter(
+        Vendor.id == vendor_id, Vendor.company_id == user.company_id
+    ).first()
+    if not vendor:
+        raise HTTPException(404, "Vendor not found")
+
+    vendor.is_active = False
+    db.commit()
+    return {"detail": "Vendor deactivated"}
 
 
 @app.post("/tickets/{ticket_id}/assign-vendor")
@@ -2312,6 +2419,12 @@ def assign_ticket_vendor(
     vendor_id = data.get("vendor_id")
     if vendor_id is not None and not isinstance(vendor_id, str):
         raise HTTPException(400, "vendor_id must be a string or null")
+    if vendor_id:
+        vendor = db.query(Vendor).filter(
+            Vendor.id == vendor_id, Vendor.company_id == user.company_id, Vendor.is_active == True
+        ).first()
+        if not vendor:
+            raise HTTPException(400, "Invalid or inactive vendor")
     ticket.assigned_vendor_id = vendor_id or None
     ticket.updated_at = datetime.utcnow()
     db.commit()

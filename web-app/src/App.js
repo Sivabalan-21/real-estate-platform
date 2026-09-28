@@ -40,6 +40,10 @@ import MaintenanceNew from "./MaintenanceNew";
 import MaintenanceDetail from "./MaintenanceDetail";
 import TenantPayments from "./TenantPayments";
 
+
+import VendorLayout from "./VendorLayout";
+import VendorDashboard from "./VendorDashboard";
+
 // Blocks access to a role-specific route group before it renders, instead
 // of letting the page mount and show an empty/wrong state to the wrong
 // role. Redirects to the person's own dashboard rather than a dead end.
@@ -123,6 +127,10 @@ function App() {
           <Route path="maintenance/:id"        element={<MaintenanceDetail />} />
           <Route path="payments"               element={<TenantPayments />} />
         </Route>
+
+        <Route path="/vendor" element={<RequireRole allowed={["Vendor"]}><VendorLayout /></RequireRole>}>
+  <Route path="dashboard" element={<VendorDashboard />} />
+</Route>
 
       </Routes>
     </Router>

@@ -27,6 +27,38 @@ class Company(Base):
     dimension_types = relationship("DimensionType", back_populates="company")
     properties      = relationship("Property", back_populates="company")
 
+class VendorCategory:
+    PLUMBING = "Plumbing"
+    ELECTRICAL = "Electrical"
+    HVAC = "HVAC"
+    ROOFING = "Roofing"
+    DRYWALL = "Drywall"
+    PEST_CONTROL = "Pest Control"
+    APPLIANCE = "Appliance"
+    GENERAL = "General"
+
+    ALL = [PLUMBING, ELECTRICAL, HVAC, ROOFING, DRYWALL, PEST_CONTROL, APPLIANCE, GENERAL]
+
+
+class Vendor(Base):
+    __tablename__ = "vendors"
+
+    id = Column(String, primary_key=True, default=uuid_str)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False, index=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    avg_rating = Column(Float, nullable=True)
+    total_jobs = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    company = relationship("Company", backref="vendors")
+    tickets = relationship("MaintenanceTicket", back_populates="assigned_vendor")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -268,7 +300,7 @@ class MaintenanceTicket(Base):
     # vendors table doesn't exist until Month 2 — plain nullable column with
     # no FK constraint for now, per the Day 14 spec. Will get a real FK once
     # the Vendor model lands.
-    assigned_vendor_id = Column(String, nullable=True, index=True)
+    assigned_vendor_id = Column(String, ForeignKey("vendors.id"), nullable=True, index=True)
 
     rating = Column(Integer, nullable=True)  # tenant's 1-5 rating after closure
 
@@ -290,6 +322,7 @@ class MaintenanceTicket(Base):
     property = relationship("Property")
     unit = relationship("Unit", back_populates="maintenance_tickets")
     assigned_pm_user = relationship("User", foreign_keys=[assigned_pm])
+    assigned_vendor = relationship("Vendor", back_populates="tickets")
 
     attachments = relationship(
         "TicketAttachment",
@@ -512,3 +545,5 @@ class PropertyAssignment(Base):
 
     property    = relationship("Property", back_populates="assignments")
     pm_user     = relationship("User", foreign_keys=[pm_username])
+
+
