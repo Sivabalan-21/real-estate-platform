@@ -41,8 +41,9 @@ from schemas import (
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
+from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
 from services.user_service import (
     backfill_companies,
     complete_registration,
@@ -59,10 +60,10 @@ from services.user_service import (
 from tokens import ALGORITHM, SECRET_KEY, create_access_token, create_reset_token, create_vendor_access_token, is_token_expired
 import shutil
 
+load_dotenv()
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://187.127.180.107")
-
-load_dotenv()
 
 app = FastAPI(title="Property Portal API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -74,7 +75,7 @@ conf = ConnectionConfig(
     MAIL_FROM=os.getenv("MAIL_FROM"),
     MAIL_PORT=int(os.getenv("MAIL_PORT", "587")),
     MAIL_SERVER=os.getenv("MAIL_SERVER"),
-    MAIL_STARTTLS=True,
+    MAIL_STARTTLS=False,
     MAIL_SSL_TLS=False,
 )
 
@@ -159,6 +160,9 @@ Property Portal Team
 
 
 async def send_email(email: str, subject: str, body: str):
+    if not os.getenv("MAIL_SERVER"):
+        print("[notify] mail disabled, skipped")
+        return False
     message = MessageSchema(
         subject=subject,
         recipients=[email],
@@ -168,6 +172,7 @@ async def send_email(email: str, subject: str, body: str):
     )
     fm = FastMail(conf)
     await fm.send_message(message)
+    return True
 
 async def send_logo_upload_email(email: str, link: str, username: str, company_name: str):
     subject = "Upload Your Company Logo — PropOS"
@@ -209,7 +214,7 @@ This link is private to you and expires in 7 days. Please do not share it.
 Regards,
 Property Portal Team
 """
-    await send_email(vendor.email, subject, body)
+    return await send_email(vendor.email, subject, body)
 
 
 @app.get("/")
@@ -417,6 +422,9 @@ async def update_user_route(
     )
 
     # SEND RESET EMAIL
+
+
+
     if data.send_reset and updated.reset_token:
 
         reset_link = f"{FRONTEND_URL}/reset-password/{updated.reset_token}"
@@ -1877,9 +1885,10 @@ def create_maintenance_ticket(
     db.add(ticket)
     db.flush()  # assigns ticket.id before the history row references it
     record_ticket_history(db, ticket, from_status=None, to_status="open", changed_by=user.username)
-    sync_unit_status_to_maintenance(db, ticket)   
+    sync_unit_status_to_maintenance(db, ticket)
     db.commit()
     db.refresh(ticket)
+    
     return serialize_ticket(ticket)
 
 
@@ -1906,7 +1915,7 @@ def get_property_maintenance_tickets(
 
 
 @app.put("/maintenance-tickets/{ticket_id}")
-def update_maintenance_ticket(
+async def update_maintenance_ticket(
     ticket_id: str,
     data: MaintenanceTicketUpdate,
     db: Session = Depends(get_db),
@@ -1933,7 +1942,7 @@ def update_maintenance_ticket(
         db, user.username, ticket.property_id
     ):
         raise HTTPException(403, "Not authorized for this ticket")
-
+    old_status = ticket.status                                   # <-- add
     if data.title is not None:
         ticket.title = data.title
     if data.description is not None:
@@ -1958,6 +1967,10 @@ def update_maintenance_ticket(
     ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
+    try:
+        await maybe_notify_quote_submitted(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
     return serialize_ticket(ticket)
 
 
@@ -1968,7 +1981,7 @@ def update_maintenance_ticket(
 # keep working as-is.
 
 @app.post("/tickets", status_code=201)
-def create_ticket(
+async def create_ticket(
     data: TicketCreate,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
@@ -2021,6 +2034,10 @@ def create_ticket(
     sync_unit_status_to_maintenance(db, ticket)
     db.commit()
     db.refresh(ticket)
+    try:
+        await notify_ticket_created(ticket, db)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
     return serialize_ticket(ticket)
 
 
@@ -2102,7 +2119,7 @@ def get_ticket(
 
 
 @app.post("/tickets/{ticket_id}/transition")
-def transition_ticket_endpoint(
+async def transition_ticket_endpoint(
     ticket_id: str,
     data: TicketTransitionRequest,
     db: Session = Depends(get_db),
@@ -2120,10 +2137,14 @@ def transition_ticket_endpoint(
         db, user.username, ticket.property_id
     ):
         raise HTTPException(403, "Not authorized for this ticket")
-
+    old_status = ticket.status
     transition_ticket(db, ticket, data.new_status, user, data.note)
     db.commit()
     db.refresh(ticket)
+    try:
+        await maybe_notify_quote_submitted(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
@@ -2478,8 +2499,9 @@ async def assign_ticket_vendor(
     email_sent = False
     if vendor.email:
         try:
-            await send_vendor_assignment_email(vendor, ticket, f"{FRONTEND_URL}/vendor-access/{token}")
-            email_sent = True
+            email_sent = await send_vendor_assignment_email(
+                vendor, ticket, f"{FRONTEND_URL}/vendor-access/{token}"
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[assign-vendor] email to {vendor.email} failed: {exc}")
 
@@ -2489,7 +2511,7 @@ async def assign_ticket_vendor(
 
 
 @app.patch("/pm/tickets/{ticket_id}")
-def update_pm_ticket(
+async def update_pm_ticket(
     ticket_id: str,
     data: dict,
     db: Session = Depends(get_db),
@@ -2510,7 +2532,8 @@ def update_pm_ticket(
     assigned_property_ids = _pm_assigned_property_ids(db, user.username)
     if ticket.property_id not in assigned_property_ids:
         raise HTTPException(403, "Not authorized for this ticket")
-
+    
+    old_status = ticket.status                                   # <-- add
     if "status" in data:
         new_status = data["status"]
         transition_ticket(db, ticket, new_status, user, data.get("note"))
@@ -2527,6 +2550,10 @@ def update_pm_ticket(
     ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
+    try:
+        await maybe_notify_quote_submitted(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
     return serialize_pm_ticket_detail(ticket, db)
 
 

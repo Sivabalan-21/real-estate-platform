@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 
 from models import MaintenanceTicket, TicketHistory, Unit, User
 from rbac import ROLE_TENANT
-from ticket_states import TICKET_STATES, allowed_next_statuses, canonicalize_ticket_status
+from ticket_states import (
+    TICKET_STATUS_FILTERS,
+    PENDING_OWNER_APPROVAL,
+    TICKET_STATES,
+    allowed_next_statuses,
+    canonicalize_ticket_status,
+)
 
 # Both are terminal (see ticket_states.py) -- neither leaves work pending on
 # the unit, so both trigger the maintenance-status revert below.

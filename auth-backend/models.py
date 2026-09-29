@@ -1,6 +1,5 @@
 from datetime import datetime
 from uuid import uuid4
-from xmlrpc.client import Boolean
 
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Float, Date, Boolean, Text
 from sqlalchemy.orm import relationship
