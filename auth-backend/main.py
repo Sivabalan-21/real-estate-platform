@@ -13,7 +13,7 @@ from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from jose import JWTError, jwt
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
-
+from pydantic import BaseModel
 from database import Base, SessionLocal, engine
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory, VendorTicketAccess
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
@@ -2304,6 +2304,7 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     # leaking to every caller, tenant included). PM-facing views are the
     # one place that should still see it.
     data["pm_notes"] = ticket.pm_notes
+    data["quote_amount"] = ticket.quote_amount
     data["unit_address"] = (
         ", ".join(
             value for value in (
@@ -2509,6 +2510,48 @@ async def assign_ticket_vendor(
     out["vendor_email_sent"] = email_sent
     return out
 
+class VendorQuoteRequest(BaseModel):
+    amount: float
+    note: str | None = None
+
+
+@app.post("/vendor-access/{token}/quote")
+def vendor_submit_quote(
+    token: str,
+    data: VendorQuoteRequest,
+    db: Session = Depends(get_db),
+):
+    access = db.query(VendorTicketAccess).filter(
+        VendorTicketAccess.token == token
+    ).first()
+    if not access or access.expires_at < datetime.utcnow():
+        raise HTTPException(404, "This link is invalid or has expired")
+
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == access.ticket_id
+    ).first()
+    vendor = db.query(Vendor).filter(Vendor.id == access.vendor_id).first()
+    if not ticket or not vendor:
+        raise HTTPException(404, "Ticket not found")
+
+    if ticket.status != "quote_requested":
+        raise HTTPException(400, "A quote has already been submitted for this ticket")
+    if data.amount <= 0:
+        raise HTTPException(400, "Amount must be greater than 0")
+
+    previous_status = ticket.status
+    ticket.quote_amount = data.amount
+    ticket.status = "quote_received"
+    ticket.updated_at = datetime.utcnow()
+    db.add(TicketHistory(
+        ticket_id=ticket.id,
+        from_status=previous_status,
+        to_status="quote_received",
+        changed_by=f"vendor:{vendor.name}",
+        note=(data.note or "").strip() or f"Quote submitted: {data.amount}",
+    ))
+    db.commit()
+    return {"ok": True, "status": ticket.status, "quote_amount": ticket.quote_amount}
 
 @app.patch("/pm/tickets/{ticket_id}")
 async def update_pm_ticket(
@@ -3121,3 +3164,28 @@ def reject_ticket(
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
+
+@app.get("/vendor-access/{token}")
+def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
+    access = db.query(VendorTicketAccess).filter(
+        VendorTicketAccess.token == token
+    ).first()
+    if not access or access.expires_at < datetime.utcnow():
+        raise HTTPException(404, "This link is invalid or has expired")
+
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == access.ticket_id
+    ).first()
+    vendor = db.query(Vendor).filter(Vendor.id == access.vendor_id).first()
+    if not ticket or not vendor:
+        raise HTTPException(404, "Ticket not found")
+
+    return {
+        "vendor_name": vendor.name,
+        "ticket_id": ticket.id,
+        "title": getattr(ticket, "title", None),
+        "description": getattr(ticket, "description", None),
+        "status": ticket.status,
+        "created_at": getattr(ticket, "created_at", None),
+        "expires_at": access.expires_at,
+    }

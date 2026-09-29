@@ -44,6 +44,7 @@ import TenantPayments from "./TenantPayments";
 import VendorLayout from "./VendorLayout";
 import VendorDashboard from "./VendorDashboard";
 import VendorDirectory from './VendorDirectory';
+import VendorAccess from "./VendorAccess";
 
 // Blocks access to a role-specific route group before it renders, instead
 // of letting the page mount and show an empty/wrong state to the wrong
@@ -83,6 +84,7 @@ function App() {
 
         {/* ── REGISTRATION (invite link, no auth needed) ───── */}
         <Route path="/register/:token"         element={<Register />} />
+        <Route path="/vendor-access/:token"    element={<VendorAccess />} />
 
         {/* ── SUPER ADMIN ──────────────────────────────────── */}
         <Route element={<Layout />}>

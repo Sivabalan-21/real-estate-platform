@@ -543,7 +543,17 @@ function PMTicketDetail() {
           {vendorNotice && <p style={s.savedHint}>{vendorNotice}</p>}
           {vendorError && <p style={s.errorText}>{vendorError}</p>}
         </div>
-
+        {ticket.quote_amount != null && (
+          <div style={s.section}>
+            <p style={s.sectionLabel}>Vendor quote</p>
+            <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+              ₹{Number(ticket.quote_amount).toLocaleString("en-IN")}
+            </p>
+            {ticket.assigned_vendor && (
+              <p style={s.muted}>from {ticket.assigned_vendor.name}</p>
+            )}
+          </div>
+        )}
         {/* Contextual actions — replaces the generic status dropdown */}
         <div style={s.section}>
           <p style={s.sectionLabel}>Actions</p>
