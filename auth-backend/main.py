@@ -41,9 +41,9 @@ from schemas import (
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, _get_pm_users as get_ticket_pm_users
 from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
-from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket
+from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
 from services.user_service import (
     backfill_companies,
     complete_registration,
@@ -2510,49 +2510,6 @@ async def assign_ticket_vendor(
     out["vendor_email_sent"] = email_sent
     return out
 
-class VendorQuoteRequest(BaseModel):
-    amount: float
-    note: str | None = None
-
-
-@app.post("/vendor-access/{token}/quote")
-def vendor_submit_quote(
-    token: str,
-    data: VendorQuoteRequest,
-    db: Session = Depends(get_db),
-):
-    access = db.query(VendorTicketAccess).filter(
-        VendorTicketAccess.token == token
-    ).first()
-    if not access or access.expires_at < datetime.utcnow():
-        raise HTTPException(404, "This link is invalid or has expired")
-
-    ticket = db.query(MaintenanceTicket).filter(
-        MaintenanceTicket.id == access.ticket_id
-    ).first()
-    vendor = db.query(Vendor).filter(Vendor.id == access.vendor_id).first()
-    if not ticket or not vendor:
-        raise HTTPException(404, "Ticket not found")
-
-    if ticket.status != "quote_requested":
-        raise HTTPException(400, "A quote has already been submitted for this ticket")
-    if data.amount <= 0:
-        raise HTTPException(400, "Amount must be greater than 0")
-
-    previous_status = ticket.status
-    ticket.quote_amount = data.amount
-    ticket.status = "quote_received"
-    ticket.updated_at = datetime.utcnow()
-    db.add(TicketHistory(
-        ticket_id=ticket.id,
-        from_status=previous_status,
-        to_status="quote_received",
-        changed_by=f"vendor:{vendor.name}",
-        note=(data.note or "").strip() or f"Quote submitted: {data.amount}",
-    ))
-    db.commit()
-    return {"ok": True, "status": ticket.status, "quote_amount": ticket.quote_amount}
-
 @app.patch("/pm/tickets/{ticket_id}")
 async def update_pm_ticket(
     ticket_id: str,
@@ -3165,27 +3122,172 @@ def reject_ticket(
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
 
-@app.get("/vendor-access/{token}")
-def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
+
+
+# ---------------------------------------------------------------------------
+# Vendor portal (token access, no login)
+# ---------------------------------------------------------------------------
+MAX_QUOTE_PDF_SIZE = 10 * 1024 * 1024  # 10MB
+VENDOR_DONE_STATUSES = ("completed", "closed")
+
+
+def _vendor_error(status_code: int, code: str, message: str) -> HTTPException:
+    """Structured error so the portal can render the right message."""
+    return HTTPException(status_code, detail={"code": code, "message": message})
+
+
+def _resolve_vendor_access(token: str, db: Session):
+    """Validate a vendor token and return (access, ticket, vendor).
+
+    404 invalid  - unknown token
+    410 job_completed / job_closed - ticket is finished (checked before expiry)
+    410 expired  - past 7-day TTL, or revoked
+    """
     access = db.query(VendorTicketAccess).filter(
         VendorTicketAccess.token == token
     ).first()
-    if not access or access.expires_at < datetime.utcnow():
-        raise HTTPException(404, "This link is invalid or has expired")
+    if not access:
+        raise _vendor_error(404, "invalid", "This link is not valid. Contact your property manager.")
 
     ticket = db.query(MaintenanceTicket).filter(
         MaintenanceTicket.id == access.ticket_id
     ).first()
     vendor = db.query(Vendor).filter(Vendor.id == access.vendor_id).first()
     if not ticket or not vendor:
-        raise HTTPException(404, "Ticket not found")
+        raise _vendor_error(404, "invalid", "This link is not valid. Contact your property manager.")
+
+    if ticket.status in VENDOR_DONE_STATUSES:
+        raise _vendor_error(410, "job_completed", "This job is already completed.")
+    if ticket.status == "rejected":
+        raise _vendor_error(410, "job_closed", "This job is no longer active. Contact your property manager.")
+    if access.revoked or is_token_expired(access.expires_at):
+        raise _vendor_error(410, "expired", "This link has expired. Contact your property manager.")
+
+    return access, ticket, vendor
+
+
+def _parse_quote_amount(raw: str | None) -> float | None:
+    if raw is None or not raw.strip():
+        return None
+    cleaned = raw.replace(",", "").replace("\u20b9", "").strip()
+    try:
+        value = float(cleaned)
+    except ValueError:
+        raise HTTPException(400, "Quote amount must be a number")
+    if not (0 < value < 1_000_000_000):
+        raise HTTPException(400, "Quote amount must be greater than 0")
+    return value
+
+
+@app.get("/vendor-access/{token}")
+def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
+    """Read-only job view for a vendor. Never returns tenant name/email."""
+    access, ticket, vendor = _resolve_vendor_access(token, db)
+
+    prop = ticket.property
+    unit = ticket.unit
+    category = ticket.category or "Maintenance"
+    place = prop.name if prop else "Property"
+    if unit:
+        job_title = f"{category} Repair \u2014 Unit {unit.unit_number}, {place}"
+    else:
+        job_title = f"{category} Repair \u2014 {place}"
+
+    photos = (
+        db.query(TicketAttachment)
+        .filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.type == "photo")
+        .order_by(TicketAttachment.uploaded_at.asc())
+        .all()
+    )
+
+    pms = get_ticket_pm_users(ticket, db)
+    pm = pms[0] if pms else None
 
     return {
         "vendor_name": vendor.name,
         "ticket_id": ticket.id,
-        "title": getattr(ticket, "title", None),
-        "description": getattr(ticket, "description", None),
+        "job_title": job_title,
+        "category": ticket.category,
+        "description": ticket.description,
         "status": ticket.status,
-        "created_at": getattr(ticket, "created_at", None),
+        "property_name": prop.name if prop else None,
+        "property_address": prop.address if prop else None,
+        "unit_number": unit.unit_number if unit else None,
+        "photos": [{"id": a.id, "url": a.url, "filename": a.filename} for a in photos],
+        "pm": {
+            "name": (pm.full_name or pm.username) if pm else None,
+            "phone": pm.phone if pm else None,
+        },
+        "can_submit_quote": ticket.status == "quote_requested",
+        "quote_amount": ticket.quote_amount,
         "expires_at": access.expires_at,
+    }
+
+
+@app.post("/vendor-access/{token}/upload", status_code=201)
+async def vendor_upload_quote(
+    token: str,
+    file: UploadFile = File(...),
+    quote_amount: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Vendor uploads a PDF quote: stored as a TicketAttachment(type='quote'),
+    optional amount saved to ticket.quote_amount, ticket -> quote_received,
+    PM notified."""
+    access, ticket, vendor = _resolve_vendor_access(token, db)
+
+    if ticket.status != "quote_requested":
+        raise HTTPException(400, "A quote has already been submitted for this job")
+
+    amount = _parse_quote_amount(quote_amount)
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "The file is empty")
+    if len(data) > MAX_QUOTE_PDF_SIZE:
+        raise HTTPException(400, "File too large (max 10MB)")
+    # Phones often send PDFs as application/octet-stream, so trust the
+    # content itself rather than the declared MIME type.
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(400, "Please upload your quote as a PDF")
+
+    upload_dir = os.path.join("uploads", "tickets", ticket.id)
+    os.makedirs(upload_dir, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}.pdf"
+    filepath = os.path.join(upload_dir, stored_name)
+    with open(filepath, "wb") as out:
+        out.write(data)
+
+    try:
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            url=f"{BACKEND_URL}/uploads/tickets/{ticket.id}/{stored_name}",
+            filename=os.path.basename(file.filename or "quote.pdf"),
+            type="quote",
+            uploaded_by=f"vendor:{vendor.name}",
+        )
+        db.add(attachment)
+        if amount is not None:
+            ticket.quote_amount = amount
+        vendor_transition_ticket(
+            db, ticket, "quote_received", vendor.name,
+            f"Quote uploaded by {vendor.name}" + (f" ({amount:,.2f})" if amount is not None else ""),
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise
+    db.refresh(ticket)
+    db.refresh(attachment)
+
+    # After commit: a mail failure must never undo the upload.
+    await notify_quote_received_pm(ticket, db, vendor.name)
+
+    return {
+        "ok": True,
+        "status": ticket.status,
+        "quote_amount": ticket.quote_amount,
+        "attachment": serialize_attachment(attachment),
     }

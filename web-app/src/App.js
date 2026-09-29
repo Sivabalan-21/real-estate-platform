@@ -85,6 +85,8 @@ function App() {
         {/* ── REGISTRATION (invite link, no auth needed) ───── */}
         <Route path="/register/:token"         element={<Register />} />
         <Route path="/vendor-access/:token"    element={<VendorAccess />} />
+        {/* Alias per spec (/vendor/:token). Static /vendor/dashboard etc. still win. */}
+        <Route path="/vendor/:token"           element={<VendorAccess />} />
 
         {/* ── SUPER ADMIN ──────────────────────────────────── */}
         <Route element={<Layout />}>

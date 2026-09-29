@@ -159,3 +159,41 @@ async def maybe_notify_quote_submitted(ticket, db, old_status):
     ticket just moved INTO 'Pending Owner Approval'."""
     if old_status != ticket.status and ticket.status == PENDING_OWNER_APPROVAL:
         await notify_quote_submitted(ticket, db)
+
+
+async def notify_quote_received_pm(ticket, db, vendor_name: str):
+    """Tell the ticket's PM(s) a vendor just uploaded a quote. Never raises."""
+    try:
+        pms = _get_pm_users(ticket, db)
+        if not pms:
+            print(f"[notify] ticket {ticket.id}: no PM found, skipping quote-received email")
+            return
+
+        place = _place(ticket)
+        try:
+            amount = f"{float(ticket.quote_amount):,.2f}"
+        except (TypeError, ValueError):
+            amount = "see attached PDF"
+
+        link = f"{_frontend_url()}/pm/tickets/{ticket.id}"
+        subject = f"Quote Received - {place}"
+        for pm in pms:
+            body = f"""
+Hi {_display_name(pm)},
+
+{vendor_name} has uploaded a quote.
+
+Property     : {place}
+Category     : {ticket.category or "-"}
+Quote amount : {amount}
+
+Review the quote:
+{link}
+
+Regards,
+Property Portal Team
+"""
+            await _send(pm.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_quote_received_pm error: {exc}")
+        traceback.print_exc()

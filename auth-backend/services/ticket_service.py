@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from models import MaintenanceTicket, TicketHistory, Unit, User
-from rbac import ROLE_TENANT
+from rbac import ROLE_PROPERTY_MANAGER, ROLE_TENANT
 from ticket_states import (
     TICKET_STATUS_FILTERS,
     PENDING_OWNER_APPROVAL,
@@ -118,4 +118,36 @@ def transition_ticket(
     if new_status in TERMINAL_TICKET_STATUSES:
         sync_unit_status_from_ticket_resolution(db, ticket)
 
+    return ticket
+
+
+def vendor_transition_ticket(
+    db: Session,
+    ticket: MaintenanceTicket,
+    new_status: str,
+    vendor_name: str,
+    note: str | None = None,
+) -> MaintenanceTicket:
+    """Lifecycle transition performed by a token-authenticated vendor.
+
+    Vendors have no User row, so transition_ticket() (which needs a User with
+    a role) can't be used. Legality is still enforced by the same state
+    machine: the move must be one the PM role is allowed to make, so a vendor
+    token can only ever do quote_requested -> quote_received.
+    The caller owns the transaction.
+    """
+    current_status = canonicalize_ticket_status(ticket.status)
+    if new_status not in allowed_next_statuses(current_status, ROLE_PROPERTY_MANAGER):
+        raise HTTPException(400, "Transition not allowed")
+
+    previous_status = ticket.status
+    ticket.status = new_status
+    ticket.updated_at = datetime.utcnow()
+    db.add(TicketHistory(
+        ticket_id=ticket.id,
+        from_status=previous_status,
+        to_status=new_status,
+        changed_by=f"vendor:{vendor_name}",
+        note=(note or "").strip() or None,
+    ))
     return ticket
