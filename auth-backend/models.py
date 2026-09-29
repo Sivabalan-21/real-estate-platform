@@ -55,7 +55,19 @@ class Vendor(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # The portal login (users row, role "Vendor") that acts for this vendor.
+    # Nullable: directory-only vendors (no account) still exist and keep using
+    # the emailed token link. Unique: one login <-> one vendor profile.
+    user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
     company = relationship("Company", backref="vendors")
+    user = relationship("User", foreign_keys=[user_id])
     tickets = relationship("MaintenanceTicket", back_populates="assigned_vendor")
 
 

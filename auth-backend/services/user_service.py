@@ -22,6 +22,7 @@ from rbac import (
     is_super_admin,
     is_valid_role,
 )
+from services.vendor_service import link_vendor_by_email
 from tokens import create_invite_token, create_reset_token, is_token_expired
 
 
@@ -504,6 +505,12 @@ def complete_registration(db: Session, token: str, data: dict):
     user.token_type = None
     user.token_expiry = None
     user.updated_at = datetime.utcnow()
+
+    # A Vendor login is the vendor's portal identity: attach it to the vendor
+    # profile the PM already created for this email (same company), if any.
+    if user.role == "Vendor":
+        db.flush()
+        link_vendor_by_email(db, user)
 
     # Tenant's username didn't exist yet when create_user() ran, so if the PM
     # already created a lease on the linked unit before the tenant registered,
