@@ -6,6 +6,7 @@ import ResetPassword from "./ResetPassword";
 
 import Layout from "./Layout";
 import Dashboard from "./Dashboard";       // Super Admin Dashboard
+import Companies from "./Companies";         // Super Admin Company Management
 import ViewUsers from "./ViewUsers";       // Super Admin User Management (Create / Edit / Delete)
 import Register from "./Register";         // Invite-based self-registration
 
@@ -92,6 +93,7 @@ function App() {
         {/* ── SUPER ADMIN ──────────────────────────────────── */}
         <Route element={<Layout />}>
           <Route path="/dashboard"             element={<Dashboard />} />
+          <Route path="/companies/manage"      element={<RequireRole allowed={["Super Admin"]}><Companies /></RequireRole>} />
           <Route path="/users/manage"          element={<ViewUsers />} />
         </Route>
 

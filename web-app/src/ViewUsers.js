@@ -9,6 +9,23 @@ const SUPER_ADMIN_CREATE_ROLES = ROLE_OPTIONS_BY_CURRENT_ROLE["Super Admin"];
 // they're actually responsible for, not the full platform role list.
 const VISIBLE_ROLES_BY_CURRENT_ROLE = ROLE_OPTIONS_BY_CURRENT_ROLE;
 
+// Display order for the user list: highest role first. Roles not listed here
+// sort after these; ties break by company, then by user name.
+const ROLE_ORDER = [
+  "Company Admin",
+  "Regional Manager",
+  "Property Manager",
+  "Owner",
+  "Tenant",
+  "Vendor",
+];
+const roleRank = (role) => {
+  const i = ROLE_ORDER.indexOf(role);
+  return i === -1 ? ROLE_ORDER.length : i;
+};
+const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+const userDisplayName = (u) => u.full_name || u.username || u.email || "";
+
 // ─── MODAL ───────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -153,7 +170,11 @@ function ViewUsers() {
       u.company_name?.toLowerCase().includes(search.toLowerCase());
     const matchRole = filterRole === "All" || u.role === filterRole;
     return matchSearch && matchRole;
-  });
+  }).sort((a, b) =>
+    roleRank(a.role) - roleRank(b.role) ||
+    collator.compare(a.company_name || "", b.company_name || "") ||
+    collator.compare(userDisplayName(a), userDisplayName(b))
+  );
 
   // ── CREATE ────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
