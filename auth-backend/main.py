@@ -313,8 +313,17 @@ async def create_user_route(
 
 
 @app.get("/users")
-def get_users(db: Session = Depends(get_db)):
-    users = db.query(User).all()
+def get_users(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if user.role not in (ROLE_SUPER_ADMIN, ROLE_COMPANY_ADMIN, ROLE_ADMIN, ROLE_PROPERTY_MANAGER):
+        raise HTTPException(403, "Not authorized")
+
+    query = db.query(User)
+    if user.role != ROLE_SUPER_ADMIN:
+        query = query.filter(User.company_id == user.company_id)
+    users = query.all()
 
     result = []
     for u in users:
@@ -1969,6 +1978,7 @@ async def update_maintenance_ticket(
     ):
         raise HTTPException(403, "Not authorized for this ticket")
     old_status = ticket.status                                   # <-- add
+    old_vendor_id = ticket.assigned_vendor_id                    # <-- add
     if data.title is not None:
         ticket.title = data.title
     if data.description is not None:
@@ -1986,10 +1996,13 @@ async def update_maintenance_ticket(
     if data.assigned_vendor_id is not None:
         ticket.assigned_vendor_id = data.assigned_vendor_id
     if data.rating is not None:
+        if not 1 <= data.rating <= 5:
+            raise HTTPException(400, "Rating must be between 1 and 5")
         ticket.rating = data.rating
     if data.status is not None:
         transition_ticket(db, ticket, data.status, user, data.note)
-
+    for vid in {old_vendor_id, ticket.assigned_vendor_id}:
+        recompute_vendor_stats(db, vid)
     ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
@@ -2165,6 +2178,7 @@ async def transition_ticket_endpoint(
         raise HTTPException(403, "Not authorized for this ticket")
     old_status = ticket.status
     transition_ticket(db, ticket, data.new_status, user, data.note)
+    recompute_vendor_stats(db, ticket.assigned_vendor_id)
     db.commit()
     db.refresh(ticket)
     try:
@@ -2373,6 +2387,26 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
         if raised_by_user else None
     )
     return data
+
+def recompute_vendor_stats(db: Session, vendor_id: str | None) -> None:
+    """Rebuild a vendor's total_jobs / avg_rating from their finished tickets."""
+    if not vendor_id:
+        return
+    vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+    if not vendor:
+        return
+    db.flush()  # make sure this request's status/rating changes are visible below
+    done = (
+        MaintenanceTicket.assigned_vendor_id == vendor_id,
+        MaintenanceTicket.status.in_(VENDOR_DONE_STATUSES),
+    )
+    vendor.total_jobs = db.query(MaintenanceTicket).filter(*done).count()
+    avg = (
+        db.query(func.avg(MaintenanceTicket.rating))
+        .filter(*done, MaintenanceTicket.rating.isnot(None))
+        .scalar()
+    )
+    vendor.avg_rating = round(float(avg), 1) if avg is not None else None
 
 VENDOR_EMAIL_TAKEN = "A vendor with this email already exists (it may be deactivated)."
 
@@ -2608,7 +2642,7 @@ async def update_pm_ticket(
         if data["priority"] == "urgent" and ticket.status in ("closed", "rejected"):
             raise HTTPException(400, "Closed or rejected tickets cannot be marked urgent.")
         ticket.priority = data["priority"]
-
+    recompute_vendor_stats(db, ticket.assigned_vendor_id)
     ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
