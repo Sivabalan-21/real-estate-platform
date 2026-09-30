@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from jose import JWTError, jwt
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -2372,6 +2374,25 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     )
     return data
 
+VENDOR_EMAIL_TAKEN = "A vendor with this email already exists (it may be deactivated)."
+
+
+def _normalize_email(email: str | None) -> str | None:
+    email = (email or "").strip()
+    return email or None  # "" -> NULL, so blank emails never collide
+
+
+def _vendor_email_taken(db: Session, company_id: str, email: str | None, exclude_id: str | None = None) -> bool:
+    if not email:
+        return False
+    q = db.query(Vendor.id).filter(
+        Vendor.company_id == company_id,
+        func.lower(Vendor.email) == email.lower(),
+    )
+    if exclude_id:
+        q = q.filter(Vendor.id != exclude_id)
+    return q.first() is not None
+
 
 @app.post("/vendors", status_code=201)
 def create_vendor(
@@ -2386,17 +2407,25 @@ def create_vendor(
     if data.category not in VendorCategory.ALL:
         raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
 
+    email = _normalize_email(data.email)
+    if _vendor_email_taken(db, user.company_id, email):
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
+
     vendor = Vendor(
         company_id=user.company_id,
         name=data.name,
         category=data.category,
         phone=data.phone,
-        email=data.email,
+        email=email,
         website=data.website,
         notes=data.notes,
     )
     db.add(vendor)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # two requests racing past the check above
+        db.rollback()
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
     db.refresh(vendor)
     return serialize_vendor(vendor)
 
@@ -2444,13 +2473,22 @@ def update_vendor(
     if data.category is not None and data.category not in VendorCategory.ALL:
         raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
 
-    for field in ("name", "category", "phone", "email", "website", "notes", "is_active"):
+    if data.email is not None:
+        new_email = _normalize_email(data.email)
+        if _vendor_email_taken(db, vendor.company_id, new_email, exclude_id=vendor.id):
+            raise HTTPException(409, VENDOR_EMAIL_TAKEN)
+        vendor.email = new_email
+
+    for field in ("name", "category", "phone", "website", "notes", "is_active"):
         value = getattr(data, field)
         if value is not None:
             setattr(vendor, field, value)
 
-    db.commit()
-    db.refresh(vendor)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
     return serialize_vendor(vendor)
 
 
