@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 
 from models import (
+    Vendor,
     Company,
     MaintenanceTicket,
     Property,
@@ -40,6 +41,22 @@ def make_user(db_session, company, username, role):
     db_session.add(user)
     db_session.commit()
     return user
+
+
+def assign_vendor(db_session, company, ticket, vendor_user):
+    """Vendor logins only reach tickets assigned to their own vendor profile."""
+    vendor = Vendor(
+        company_id=company.id,
+        name=f"{vendor_user.username} Co",
+        category="General",
+        email=vendor_user.email,
+        user_id=vendor_user.id,
+    )
+    db_session.add(vendor)
+    db_session.commit()
+    ticket.assigned_vendor_id = vendor.id
+    db_session.commit()
+    return vendor
 
 
 def make_ticket(db_session, company, pm, tenant):
@@ -250,6 +267,7 @@ def test_vendor_sees_all_and_pm_vendor_but_not_owner_pm(
     tenant = make_user(db_session, company_a, "vendor_rules_tenant", ROLE_TENANT)
     vendor = make_user(db_session, company_a, "vendor_rules_vendor", ROLE_VENDOR)
     ticket = make_ticket(db_session, company_a, pm, tenant)
+    assign_vendor(db_session, company_a, ticket, vendor)
     db_session.add_all([
         TicketComment(
             ticket_id=ticket.id,
@@ -288,6 +306,7 @@ def test_vendor_can_create_all_and_pm_vendor_but_not_owner_pm(
     tenant = make_user(db_session, company_a, "vendor_create_tenant", ROLE_TENANT)
     vendor = make_user(db_session, company_a, "vendor_create_vendor", ROLE_VENDOR)
     ticket = make_ticket(db_session, company_a, pm, tenant)
+    assign_vendor(db_session, company_a, ticket, vendor)
     client = client_factory(vendor)
 
     public = client.post(

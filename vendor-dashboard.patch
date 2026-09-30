@@ -1,0 +1,1584 @@
+diff --git a/auth-backend/alembic/versions/i3j4k5l6m7n8_link_vendor_to_user.py b/auth-backend/alembic/versions/i3j4k5l6m7n8_link_vendor_to_user.py
+new file mode 100644
+index 0000000..a7034f1
+--- /dev/null
++++ b/auth-backend/alembic/versions/i3j4k5l6m7n8_link_vendor_to_user.py
+@@ -0,0 +1,52 @@
++"""link vendors to user logins (vendors.user_id)
++
++Revision ID: i3j4k5l6m7n8
++Revises: h2i3j4k5l6m7
++Create Date: 2026-09-29
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++revision: str = "i3j4k5l6m7n8"
++down_revision: Union[str, Sequence[str], None] = "h2i3j4k5l6m7"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column("vendors", sa.Column("user_id", sa.String(), nullable=True))
++    op.create_foreign_key(
++        "fk_vendors_user_id_users", "vendors", "users",
++        ["user_id"], ["id"], ondelete="SET NULL",
++    )
++    op.create_index("ix_vendors_user_id", "vendors", ["user_id"], unique=True)
++
++    # Backfill: link each Vendor-role login to the vendor profile in the same
++    # company with the same email (case-insensitive). If several profiles share
++    # an email, the oldest wins, so the unique index can never be violated.
++    op.execute(
++        """
++        UPDATE vendors v
++        SET user_id = u.id
++        FROM users u
++        WHERE u.role = 'Vendor'
++          AND u.company_id = v.company_id
++          AND lower(u.email) = lower(v.email)
++          AND v.user_id IS NULL
++          AND v.id = (
++              SELECT v2.id FROM vendors v2
++              WHERE v2.company_id = u.company_id
++                AND lower(v2.email) = lower(u.email)
++              ORDER BY v2.created_at, v2.id
++              LIMIT 1
++          )
++        """
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("ix_vendors_user_id", table_name="vendors")
++    op.drop_constraint("fk_vendors_user_id_users", "vendors", type_="foreignkey")
++    op.drop_column("vendors", "user_id")
+diff --git a/auth-backend/main.py b/auth-backend/main.py
+index 464832e..389180e 100644
+--- a/auth-backend/main.py
++++ b/auth-backend/main.py
+@@ -1,10 +1,11 @@
+ from datetime import datetime
+ import os
++import re
+ import uuid
+ 
+ import bcrypt
+ from dotenv import load_dotenv
+-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
++from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Form
+ from typing import List
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.middleware.cors import CORSMiddleware
+@@ -42,8 +43,9 @@ from schemas import (
+     AssignVendorRequest,
+ )
+ from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, _get_pm_users as get_ticket_pm_users
+-from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
++from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
+ from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
++from services.vendor_service import get_vendor_for_user
+ from services.user_service import (
+     backfill_companies,
+     complete_registration,
+@@ -112,11 +114,29 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+         raise HTTPException(401, "Invalid token")
+ 
+ 
++def _vendor_may_access(request: Request) -> bool:
++    """Vendor logins are default-deny: they may only reach their own portal
++    endpoints, their profile, the vendor directory (read) and the comment
++    thread of a ticket (further limited to assigned tickets in
++    _authorize_ticket_access). Everything else is company data they have no
++    business seeing (tickets, leases, tenants, properties...)."""
++    path, method = request.url.path, request.method
++    if path.startswith("/vendor/") or path == "/users/me":
++        return True
++    if path == "/vendors" and method == "GET":
++        return True
++    return bool(re.fullmatch(r"/tickets/[^/]+/comments(/[^/]+)?", path))
++
++
+ def current_user(
++    request: Request,
+     payload: dict = Depends(verify_token),
+     db: Session = Depends(get_db),
+ ):
+-    return get_current_user(db, payload)
++    user = get_current_user(db, payload)
++    if user.role == ROLE_VENDOR and not _vendor_may_access(request):
++        raise HTTPException(403, "Not authorized")
++    return user
+ 
+ 
+ def verify_password(plain: str, hashed: str):
+@@ -1723,6 +1743,10 @@ def _authorize_ticket_access(
+         db, user.username, ticket.property_id
+     ):
+         raise HTTPException(403, "Not authorized for this ticket")
++    if user.role == ROLE_VENDOR:
++        vendor = get_vendor_for_user(db, user)
++        if not (vendor and vendor.is_active and ticket.assigned_vendor_id == vendor.id):
++            raise HTTPException(403, "Not authorized for this ticket")
+ 
+ 
+ def serialize_ticket_comment(comment: TicketComment):
+@@ -3186,12 +3210,7 @@ def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
+ 
+     prop = ticket.property
+     unit = ticket.unit
+-    category = ticket.category or "Maintenance"
+-    place = prop.name if prop else "Property"
+-    if unit:
+-        job_title = f"{category} Repair \u2014 Unit {unit.unit_number}, {place}"
+-    else:
+-        job_title = f"{category} Repair \u2014 {place}"
++    job_title = _vendor_job_title(ticket)
+ 
+     photos = (
+         db.query(TicketAttachment)
+@@ -3224,18 +3243,16 @@ def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
+     }
+ 
+ 
+-@app.post("/vendor-access/{token}/upload", status_code=201)
+-async def vendor_upload_quote(
+-    token: str,
+-    file: UploadFile = File(...),
+-    quote_amount: str | None = Form(None),
+-    db: Session = Depends(get_db),
++async def _store_vendor_quote(
++    db: Session,
++    ticket: MaintenanceTicket,
++    vendor: Vendor,
++    file: UploadFile,
++    quote_amount: str | None,
+ ):
+-    """Vendor uploads a PDF quote: stored as a TicketAttachment(type='quote'),
+-    optional amount saved to ticket.quote_amount, ticket -> quote_received,
+-    PM notified."""
+-    access, ticket, vendor = _resolve_vendor_access(token, db)
+-
++    """Validate + persist a vendor's PDF quote and move the ticket to
++    quote_received. Shared by the emailed-token portal and the logged-in
++    vendor dashboard so both enforce identical rules."""
+     if ticket.status != "quote_requested":
+         raise HTTPException(400, "A quote has already been submitted for this job")
+ 
+@@ -3291,3 +3308,180 @@ async def vendor_upload_quote(
+         "quote_amount": ticket.quote_amount,
+         "attachment": serialize_attachment(attachment),
+     }
++
++
++# ---------------------------------------------------------------------------
++# Vendor dashboard (logged-in vendor account): job list, job detail, quote
++# upload. Same rules as the emailed-token portal above, but authenticated by
++# the vendor's own login and scoped to the vendor profile linked to it.
++# ---------------------------------------------------------------------------
++def _vendor_job_title(ticket: MaintenanceTicket) -> str:
++    prop = ticket.property
++    unit = ticket.unit
++    category = ticket.category or "Maintenance"
++    place = prop.name if prop else "Property"
++    if unit:
++        return f"{category} Repair \u2014 Unit {unit.unit_number}, {place}"
++    return f"{category} Repair \u2014 {place}"
++
++
++def _vendor_job_summary(ticket: MaintenanceTicket) -> dict:
++    return {
++        "id": ticket.id,
++        "title": ticket.title,
++        "job_title": _vendor_job_title(ticket),
++        "description": ticket.description,
++        "category": ticket.category,
++        "priority": ticket.priority,
++        "status": ticket.status,
++        "status_label": TICKET_STATE_LABELS.get(
++            ticket.status, (ticket.status or "").replace("_", " ").title()
++        ),
++        "property_name": ticket.property.name if ticket.property else None,
++        "unit_number": ticket.unit.unit_number if ticket.unit else None,
++        "quote_amount": ticket.quote_amount,
++        "can_submit_quote": ticket.status == "quote_requested",
++        "created_at": ticket.created_at,
++        "updated_at": ticket.updated_at,
++    }
++
++
++def current_vendor(
++    user: User = Depends(current_user),
++    db: Session = Depends(get_db),
++) -> Vendor:
++    """The active vendor profile behind the logged-in Vendor account."""
++    if user.role != ROLE_VENDOR:
++        raise HTTPException(403, "Vendors only")
++    vendor = get_vendor_for_user(db, user)
++    if not vendor:
++        raise _vendor_error(
++            403, "no_vendor_profile",
++            "Your login is not linked to a vendor profile yet. "
++            "Ask your property manager to add you in the Vendor Directory.",
++        )
++    if not vendor.is_active:
++        raise _vendor_error(
++            403, "vendor_inactive",
++            "Your vendor profile is inactive. Contact your property manager.",
++        )
++    return vendor
++
++
++def _vendor_ticket_or_404(db: Session, vendor: Vendor, ticket_id: str) -> MaintenanceTicket:
++    """404 (not 403) for anything not assigned to this vendor, so a vendor
++    can't probe which ticket ids exist."""
++    ticket = db.query(MaintenanceTicket).filter(
++        MaintenanceTicket.id == ticket_id,
++        MaintenanceTicket.company_id == vendor.company_id,
++        MaintenanceTicket.assigned_vendor_id == vendor.id,
++    ).first()
++    if not ticket:
++        raise HTTPException(404, "Job not found")
++    return ticket
++
++
++@app.get("/vendor/jobs")
++def get_vendor_jobs(
++    user: User = Depends(current_user),
++    db: Session = Depends(get_db),
++):
++    """Jobs assigned to the logged-in vendor, newest activity first.
++
++    Always 200 for a Vendor login. `reason` tells the dashboard why the list
++    is empty when it is not simply "nothing assigned yet"."""
++    if user.role != ROLE_VENDOR:
++        raise HTTPException(403, "Vendors only")
++
++    vendor = get_vendor_for_user(db, user)
++    if not vendor:
++        return {"vendor": None, "jobs": [], "reason": "no_vendor_profile"}
++
++    brief = {"id": vendor.id, "name": vendor.name, "category": vendor.category}
++    if not vendor.is_active:
++        return {"vendor": brief, "jobs": [], "reason": "vendor_inactive"}
++
++    tickets = (
++        db.query(MaintenanceTicket)
++        .filter(
++            MaintenanceTicket.company_id == vendor.company_id,
++            MaintenanceTicket.assigned_vendor_id == vendor.id,
++        )
++        .order_by(MaintenanceTicket.updated_at.desc(), MaintenanceTicket.created_at.desc())
++        .all()
++    )
++    return {"vendor": brief, "jobs": [_vendor_job_summary(t) for t in tickets], "reason": None}
++
++
++@app.get("/vendor/jobs/{ticket_id}")
++def get_vendor_job(
++    ticket_id: str,
++    vendor: Vendor = Depends(current_vendor),
++    db: Session = Depends(get_db),
++):
++    """Job detail for the vendor. Never includes tenant identity, PM notes,
++    internal comments or other vendors' quotes."""
++    ticket = _vendor_ticket_or_404(db, vendor, ticket_id)
++
++    attachments = (
++        db.query(TicketAttachment)
++        .filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.type.in_(("photo", "quote")))
++        .order_by(TicketAttachment.uploaded_at.asc())
++        .all()
++    )
++    photos = [a for a in attachments if a.type == "photo"]
++    # Only quotes this vendor uploaded themselves.
++    quotes = [
++        a for a in attachments
++        if a.type == "quote" and a.uploaded_by == f"vendor:{vendor.name}"
++    ]
++
++    pms = get_ticket_pm_users(ticket, db)
++    pm = pms[0] if pms else None
++    prop = ticket.property
++
++    data = _vendor_job_summary(ticket)
++    data.update({
++        "property_address": prop.address if prop else None,
++        "photos": [{"id": a.id, "url": a.url, "filename": a.filename} for a in photos],
++        "quotes": [
++            {"id": a.id, "url": a.url, "filename": a.filename, "uploaded_at": a.uploaded_at}
++            for a in quotes
++        ],
++        "pm": {
++            "name": (pm.full_name or pm.username) if pm else None,
++            "phone": pm.phone if pm else None,
++        },
++        # Status + time only: history notes and actors can hold internal PM text.
++        "timeline": [
++            {"status": h.to_status, "at": h.created_at}
++            for h in sorted(ticket.history, key=lambda h: h.created_at)
++        ],
++    })
++    return data
++
++
++@app.post("/vendor/jobs/{ticket_id}/quote", status_code=201)
++async def vendor_job_upload_quote(
++    ticket_id: str,
++    file: UploadFile = File(...),
++    quote_amount: str | None = Form(None),
++    vendor: Vendor = Depends(current_vendor),
++    db: Session = Depends(get_db),
++):
++    ticket = _vendor_ticket_or_404(db, vendor, ticket_id)
++    return await _store_vendor_quote(db, ticket, vendor, file, quote_amount)
++
++
++@app.post("/vendor-access/{token}/upload", status_code=201)
++async def vendor_upload_quote(
++    token: str,
++    file: UploadFile = File(...),
++    quote_amount: str | None = Form(None),
++    db: Session = Depends(get_db),
++):
++    """Vendor uploads a PDF quote via the emailed link (no login): stored as a
++    TicketAttachment(type='quote'), optional amount saved to
++    ticket.quote_amount, ticket -> quote_received, PM notified."""
++    access, ticket, vendor = _resolve_vendor_access(token, db)
++    return await _store_vendor_quote(db, ticket, vendor, file, quote_amount)
+diff --git a/auth-backend/models.py b/auth-backend/models.py
+index 1b6a8b2..f8b2813 100644
+--- a/auth-backend/models.py
++++ b/auth-backend/models.py
+@@ -55,7 +55,19 @@ class Vendor(Base):
+     is_active = Column(Boolean, default=True, nullable=False)
+     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+ 
++    # The portal login (users row, role "Vendor") that acts for this vendor.
++    # Nullable: directory-only vendors (no account) still exist and keep using
++    # the emailed token link. Unique: one login <-> one vendor profile.
++    user_id = Column(
++        String,
++        ForeignKey("users.id", ondelete="SET NULL"),
++        nullable=True,
++        unique=True,
++        index=True,
++    )
++
+     company = relationship("Company", backref="vendors")
++    user = relationship("User", foreign_keys=[user_id])
+     tickets = relationship("MaintenanceTicket", back_populates="assigned_vendor")
+ 
+ 
+diff --git a/auth-backend/services/user_service.py b/auth-backend/services/user_service.py
+index 42962d8..f77ece1 100644
+--- a/auth-backend/services/user_service.py
++++ b/auth-backend/services/user_service.py
+@@ -22,6 +22,7 @@ from rbac import (
+     is_super_admin,
+     is_valid_role,
+ )
++from services.vendor_service import link_vendor_by_email
+ from tokens import create_invite_token, create_reset_token, is_token_expired
+ 
+ 
+@@ -505,6 +506,12 @@ def complete_registration(db: Session, token: str, data: dict):
+     user.token_expiry = None
+     user.updated_at = datetime.utcnow()
+ 
++    # A Vendor login is the vendor's portal identity: attach it to the vendor
++    # profile the PM already created for this email (same company), if any.
++    if user.role == "Vendor":
++        db.flush()
++        link_vendor_by_email(db, user)
++
+     # Tenant's username didn't exist yet when create_user() ran, so if the PM
+     # already created a lease on the linked unit before the tenant registered,
+     # attach it now that we finally have a username to key on.
+diff --git a/auth-backend/services/vendor_service.py b/auth-backend/services/vendor_service.py
+new file mode 100644
+index 0000000..8052e80
+--- /dev/null
++++ b/auth-backend/services/vendor_service.py
+@@ -0,0 +1,45 @@
++"""Vendor login <-> vendor profile resolution.
++
++A portal login (User, role "Vendor") acts for exactly one Vendor profile,
++linked by vendors.user_id. Profiles created before that column existed (or
++before the login was registered) are linked lazily on first use by matching
++company + email, so nothing depends on a one-off backfill.
++"""
++from sqlalchemy import func
++from sqlalchemy.orm import Session
++
++from models import User, Vendor
++
++
++def link_vendor_by_email(db: Session, user: User) -> Vendor | None:
++    """Attach an unlinked, same-company vendor profile with the user's email.
++
++    Does not commit; the caller owns the transaction.
++    """
++    if not user.email or not user.company_id:
++        return None
++    vendor = (
++        db.query(Vendor)
++        .filter(
++            Vendor.company_id == user.company_id,
++            Vendor.user_id.is_(None),
++            func.lower(Vendor.email) == user.email.strip().lower(),
++        )
++        .order_by(Vendor.created_at, Vendor.id)
++        .first()
++    )
++    if vendor:
++        vendor.user_id = user.id
++    return vendor
++
++
++def get_vendor_for_user(db: Session, user: User) -> Vendor | None:
++    """The vendor profile this login acts for, or None if there isn't one."""
++    vendor = db.query(Vendor).filter(Vendor.user_id == user.id).first()
++    if vendor:
++        return vendor
++    vendor = link_vendor_by_email(db, user)
++    if vendor:
++        db.commit()
++        db.refresh(vendor)
++    return vendor
+diff --git a/auth-backend/tests/test_ticket_comments.py b/auth-backend/tests/test_ticket_comments.py
+index 63e97e7..c8f5492 100644
+--- a/auth-backend/tests/test_ticket_comments.py
++++ b/auth-backend/tests/test_ticket_comments.py
+@@ -3,6 +3,7 @@ import importlib.util
+ from pathlib import Path
+ 
+ from models import (
++    Vendor,
+     Company,
+     MaintenanceTicket,
+     Property,
+@@ -42,6 +43,22 @@ def make_user(db_session, company, username, role):
+     return user
+ 
+ 
++def assign_vendor(db_session, company, ticket, vendor_user):
++    """Vendor logins only reach tickets assigned to their own vendor profile."""
++    vendor = Vendor(
++        company_id=company.id,
++        name=f"{vendor_user.username} Co",
++        category="General",
++        email=vendor_user.email,
++        user_id=vendor_user.id,
++    )
++    db_session.add(vendor)
++    db_session.commit()
++    ticket.assigned_vendor_id = vendor.id
++    db_session.commit()
++    return vendor
++
++
+ def make_ticket(db_session, company, pm, tenant):
+     prop = Property(
+         id=str(uuid.uuid4()),
+@@ -250,6 +267,7 @@ def test_vendor_sees_all_and_pm_vendor_but_not_owner_pm(
+     tenant = make_user(db_session, company_a, "vendor_rules_tenant", ROLE_TENANT)
+     vendor = make_user(db_session, company_a, "vendor_rules_vendor", ROLE_VENDOR)
+     ticket = make_ticket(db_session, company_a, pm, tenant)
++    assign_vendor(db_session, company_a, ticket, vendor)
+     db_session.add_all([
+         TicketComment(
+             ticket_id=ticket.id,
+@@ -288,6 +306,7 @@ def test_vendor_can_create_all_and_pm_vendor_but_not_owner_pm(
+     tenant = make_user(db_session, company_a, "vendor_create_tenant", ROLE_TENANT)
+     vendor = make_user(db_session, company_a, "vendor_create_vendor", ROLE_VENDOR)
+     ticket = make_ticket(db_session, company_a, pm, tenant)
++    assign_vendor(db_session, company_a, ticket, vendor)
+     client = client_factory(vendor)
+ 
+     public = client.post(
+diff --git a/auth-backend/tests/test_vendor_dashboard.py b/auth-backend/tests/test_vendor_dashboard.py
+new file mode 100644
+index 0000000..1daf1bc
+--- /dev/null
++++ b/auth-backend/tests/test_vendor_dashboard.py
+@@ -0,0 +1,282 @@
++"""Logged-in vendor dashboard: Vendor<->User link, job list/detail, quote
++upload, and default-deny access for Vendor logins.
++
++Uses REAL bearer tokens (only get_db is overridden), so the Vendor
++default-deny check inside current_user is exercised for real.
++"""
++import uuid
++from datetime import datetime, timedelta
++
++import pytest
++from fastapi.testclient import TestClient
++
++import main
++from models import (
++    Company, MaintenanceTicket, Property, PropertyAssignment, TicketAttachment,
++    TicketHistory, Unit, User, Vendor,
++)
++from rbac import ROLE_PROPERTY_MANAGER, ROLE_TENANT, ROLE_VENDOR
++from tokens import create_access_token
++
++PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
++
++
++@pytest.fixture(autouse=True)
++def tmp_uploads(tmp_path, monkeypatch):
++    (tmp_path / "uploads").mkdir()
++    monkeypatch.chdir(tmp_path)
++
++
++@pytest.fixture(autouse=True)
++def no_mail(monkeypatch):
++    async def fake(*a, **k):
++        return True
++    monkeypatch.setattr(main, "send_email", fake)
++    monkeypatch.setattr(main, "notify_quote_received_pm", fake)
++
++
++@pytest.fixture
++def api(db_session):
++    def _get_db():
++        yield db_session
++    main.app.dependency_overrides[main.get_db] = _get_db
++    yield TestClient(main.app)
++    main.app.dependency_overrides.clear()
++
++
++def _hdr(user):
++    t = create_access_token({"sub": user.username, "role": user.role, "company_id": user.company_id})
++    return {"Authorization": f"Bearer {t}"}
++
++
++def _user(db, company, username, role, email=None, **kw):
++    u = User(id=str(uuid.uuid4()), username=username, email=email or f"{username}@example.com",
++             role=role, company_id=company.id, status="active", **kw)
++    db.add(u)
++    db.commit()
++    return u
++
++
++@pytest.fixture
++def world(db_session, company_a, company_b):
++    db = db_session
++    pm = _user(db, company_a, "pm_v", ROLE_PROPERTY_MANAGER, full_name="Priya Manager", phone="+91 90000 11111")
++    tenant = _user(db, company_a, "tenant_v", ROLE_TENANT, email="secret.tenant@example.com", full_name="Secret Tenant")
++    vuser = _user(db, company_a, "raj", ROLE_VENDOR, email="Vendor@Acme.com")
++    other_vuser = _user(db, company_a, "other_v", ROLE_VENDOR, email="other@acme.com")
++
++    prop = Property(id=str(uuid.uuid4()), company_id=company_a.id, name="Oak Residences",
++                    address="12 Oak Street", total_units=1)
++    db.add(prop)
++    db.commit()
++    unit = Unit(id=str(uuid.uuid4()), property_id=prop.id, unit_number="102", type="2BR")
++    db.add(unit)
++    db.add(PropertyAssignment(id=str(uuid.uuid4()), property_id=prop.id, pm_username=pm.username))
++
++    raj = Vendor(company_id=company_a.id, name="Raj Electricals", category="Electrical",
++                 email="vendor@acme.com", phone="8610279302")           # NOTE: no user_id yet
++    other = Vendor(company_id=company_a.id, name="Other Co", category="Plumbing", email="other@acme.com")
++    db.add_all([raj, other])
++    db.commit()
++
++    def ticket(vendor, title, status="quote_requested", company=company_a):
++        t = MaintenanceTicket(
++            id=str(uuid.uuid4()), company_id=company.id, property_id=prop.id, unit_id=unit.id,
++            title=title, description=f"{title} details", category="HVAC", status=status,
++            created_by=tenant.username, assigned_pm=pm.username,
++            assigned_vendor_id=vendor.id if vendor else None,
++        )
++        db.add(t)
++        db.commit()
++        db.add(TicketHistory(ticket_id=t.id, from_status=None, to_status="open",
++                             changed_by=tenant.username, note="INTERNAL PM NOTE"))
++        db.commit()
++        return t
++
++    class W: pass
++    w = W()
++    w.pm, w.tenant, w.vuser, w.other_vuser = pm, tenant, vuser, other_vuser
++    w.raj, w.other, w.prop, w.unit = raj, other, prop, unit
++    w.mine = ticket(raj, "HVAC issue")
++    w.mine_done = ticket(raj, "Old roof", status="completed")
++    w.theirs = ticket(other, "Someone else's job")
++    w.unassigned = ticket(None, "Unassigned", status="open")
++    w.add_ticket = ticket
++    return w
++
++
++# ------------------------------ linking ------------------------------------
++def test_jobs_lazily_link_by_email_case_insensitive(api, db_session, world):
++    assert world.raj.user_id is None
++    r = api.get("/vendor/jobs", headers=_hdr(world.vuser))
++    assert r.status_code == 200
++    db_session.refresh(world.raj)
++    assert world.raj.user_id == world.vuser.id
++
++
++def test_jobs_only_this_vendors_tickets(api, world):
++    b = api.get("/vendor/jobs", headers=_hdr(world.vuser)).json()
++    assert b["reason"] is None
++    assert b["vendor"]["name"] == "Raj Electricals"
++    titles = {j["title"] for j in b["jobs"]}
++    assert titles == {"HVAC issue", "Old roof"}
++
++
++def test_job_summary_shape(api, world):
++    j = next(j for j in api.get("/vendor/jobs", headers=_hdr(world.vuser)).json()["jobs"] if j["title"] == "HVAC issue")
++    assert j["status"] == "quote_requested" and j["status_label"] == "Quote Requested"
++    assert j["can_submit_quote"] is True
++    assert j["job_title"] == "HVAC Repair \u2014 Unit 102, Oak Residences"
++
++
++def test_no_vendor_profile_is_reported_not_faked(api, db_session, company_a):
++    orphan = _user(db_session, company_a, "orphan_v", ROLE_VENDOR, email="nobody@acme.com")
++    r = api.get("/vendor/jobs", headers=_hdr(orphan))
++    assert r.status_code == 200
++    assert r.json() == {"vendor": None, "jobs": [], "reason": "no_vendor_profile"}
++
++
++def test_same_email_in_other_company_is_not_linked(api, db_session, company_b, world):
++    v = Vendor(company_id=company_b.id, name="B Co", category="Plumbing", email="cross@acme.com")
++    db_session.add(v)
++    cross = _user(db_session, world.raj.company, "cross_v", ROLE_VENDOR, email="cross@acme.com")
++    db_session.commit()
++    assert api.get("/vendor/jobs", headers=_hdr(cross)).json()["reason"] == "no_vendor_profile"
++
++
++def test_inactive_vendor_sees_nothing_and_cannot_open_jobs(api, db_session, world):
++    world.raj.is_active = False
++    db_session.commit()
++    assert api.get("/vendor/jobs", headers=_hdr(world.vuser)).json()["reason"] == "vendor_inactive"
++    r = api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.vuser))
++    assert r.status_code == 403 and r.json()["detail"]["code"] == "vendor_inactive"
++
++
++def test_non_vendor_cannot_use_vendor_jobs(api, world):
++    assert api.get("/vendor/jobs", headers=_hdr(world.pm)).status_code == 403
++    assert api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.pm)).status_code == 403
++
++
++def test_registration_links_vendor_profile(api, db_session, company_a):
++    v = Vendor(company_id=company_a.id, name="Fresh Co", category="Plumbing", email="fresh@acme.com")
++    invited = User(id=str(uuid.uuid4()), email="fresh@acme.com", role=ROLE_VENDOR, company_id=company_a.id,
++                   status="invited", reset_token="invite-tok", token_type="invite",
++                   token_expiry=datetime.utcnow() + timedelta(hours=1))
++    db_session.add_all([v, invited])
++    db_session.commit()
++    r = api.post("/complete-registration/invite-tok", json={"username": "fresh", "password": "Passw0rd!"})
++    assert r.status_code == 200, r.text
++    db_session.refresh(v)
++    assert v.user_id == invited.id
++
++
++# ------------------------------- detail ------------------------------------
++def test_detail_own_job_no_tenant_or_internal_leak(api, db_session, world):
++    db_session.add(TicketAttachment(ticket_id=world.mine.id, url="http://x/p.png", filename="p.png",
++                                    type="photo", uploaded_by=world.tenant.username))
++    db_session.add(TicketAttachment(ticket_id=world.mine.id, url="http://x/n.pdf", filename="n.pdf",
++                                    type="pm_note", uploaded_by=world.pm.username))
++    db_session.add(TicketAttachment(ticket_id=world.mine.id, url="http://x/other.pdf", filename="other.pdf",
++                                    type="quote", uploaded_by="vendor:Other Co"))
++    db_session.add(TicketAttachment(ticket_id=world.mine.id, url="http://x/mine.pdf", filename="mine.pdf",
++                                    type="quote", uploaded_by="vendor:Raj Electricals"))
++    db_session.commit()
++
++    r = api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.vuser))
++    assert r.status_code == 200
++    b = r.json()
++    assert b["property_address"] == "12 Oak Street"
++    assert [p["filename"] for p in b["photos"]] == ["p.png"]
++    assert [q["filename"] for q in b["quotes"]] == ["mine.pdf"]       # not Other Co's, not pm_note
++    assert b["pm"] == {"name": "Priya Manager", "phone": "+91 90000 11111"}
++    assert b["timeline"] and set(b["timeline"][0]) == {"status", "at"}
++    text = r.text
++    for secret in ("Secret Tenant", "secret.tenant@example.com", world.tenant.username, "INTERNAL PM NOTE", "n.pdf"):
++        assert secret not in text
++
++
++def test_detail_of_someone_elses_or_unassigned_job_is_404(api, world):
++    for t in (world.theirs, world.unassigned):
++        assert api.get(f"/vendor/jobs/{t.id}", headers=_hdr(world.vuser)).status_code == 404
++    assert api.get("/vendor/jobs/does-not-exist", headers=_hdr(world.vuser)).status_code == 404
++
++
++# -------------------------------- quote ------------------------------------
++def _quote(api, user, ticket_id, content=PDF, name="q.pdf", amount=None):
++    return api.post(f"/vendor/jobs/{ticket_id}/quote", headers=_hdr(user),
++                    files={"file": (name, content, "application/pdf")},
++                    data={"quote_amount": amount} if amount else {})
++
++
++def test_quote_upload_moves_ticket_and_records_quote(api, db_session, world):
++    r = _quote(api, world.vuser, world.mine.id, amount="4,500")
++    assert r.status_code == 201, r.text
++    assert r.json()["status"] == "quote_received" and r.json()["quote_amount"] == 4500
++    db_session.refresh(world.mine)
++    assert world.mine.status == "quote_received"
++    h = db_session.query(TicketHistory).filter_by(ticket_id=world.mine.id, to_status="quote_received").one()
++    assert h.changed_by == "vendor:Raj Electricals"
++    detail = api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.vuser)).json()
++    assert detail["can_submit_quote"] is False and len(detail["quotes"]) == 1
++
++
++def test_quote_second_upload_rejected(api, world):
++    assert _quote(api, world.vuser, world.mine.id).status_code == 201
++    assert _quote(api, world.vuser, world.mine.id).status_code == 400
++
++
++def test_quote_must_be_real_pdf_and_amount_valid(api, world):
++    assert _quote(api, world.vuser, world.mine.id, content=b"not a pdf").status_code == 400
++    assert _quote(api, world.vuser, world.mine.id, amount="-5").status_code == 400
++    assert _quote(api, world.vuser, world.mine.id, amount="abc").status_code == 400
++
++
++def test_quote_on_other_vendors_job_is_404(api, db_session, world):
++    assert _quote(api, world.vuser, world.theirs.id).status_code == 404
++    db_session.refresh(world.theirs)
++    assert world.theirs.status == "quote_requested"
++
++
++def test_quote_not_allowed_outside_quote_requested(api, world):
++    assert _quote(api, world.vuser, world.mine_done.id).status_code == 400
++
++
++# ------------------------ default-deny for Vendor logins --------------------
++@pytest.mark.parametrize("path", [
++    "/properties", "/users/my-hierarchy", "/pm/tickets", "/owner/tickets", "/tenant/tickets",
++    "/dimension-types",
++])
++def test_vendor_login_blocked_from_company_data(api, world, path):
++    assert api.get(path, headers=_hdr(world.vuser)).status_code == 403
++
++
++def test_vendor_login_blocked_from_generic_ticket_and_property_endpoints(api, world):
++    h = _hdr(world.vuser)
++    assert api.get(f"/tickets/{world.mine.id}", headers=h).status_code == 403
++    assert api.get(f"/tickets/{world.mine.id}/attachments", headers=h).status_code == 403
++    assert api.get(f"/properties/{world.prop.id}/tickets", headers=h).status_code == 403
++    assert api.get(f"/properties/{world.prop.id}/leases", headers=h).status_code == 403
++    assert api.get(f"/units/{world.unit.id}/lease", headers=h).status_code == 403
++
++
++def test_vendor_login_still_reaches_its_own_surface(api, world):
++    h = _hdr(world.vuser)
++    assert api.get("/users/me", headers=h).status_code == 200
++    assert api.get("/vendors", headers=h).status_code == 200
++    assert api.get("/vendor/jobs", headers=h).status_code == 200
++
++
++def test_comments_only_on_assigned_tickets(api, world):
++    h = _hdr(world.vuser)
++    assert api.get(f"/tickets/{world.mine.id}/comments", headers=h).status_code == 200
++    r = api.post(f"/tickets/{world.mine.id}/comments", headers=h,
++                 json={"body": "On my way Thursday", "visible_to": "pm_vendor"})
++    assert r.status_code == 201
++    assert api.get(f"/tickets/{world.theirs.id}/comments", headers=h).status_code == 403
++    assert api.post(f"/tickets/{world.theirs.id}/comments", headers=h,
++                    json={"body": "hi", "visible_to": "all"}).status_code == 403
++
++
++def test_other_roles_unaffected_by_vendor_default_deny(api, world):
++    assert api.get("/properties", headers=_hdr(world.pm)).status_code == 200
++    assert api.get(f"/tickets/{world.mine.id}", headers=_hdr(world.pm)).status_code == 200
+diff --git a/web-app/src/App.js b/web-app/src/App.js
+index 67c8f4c..05122a5 100644
+--- a/web-app/src/App.js
++++ b/web-app/src/App.js
+@@ -43,6 +43,7 @@ import TenantPayments from "./TenantPayments";
+ 
+ import VendorLayout from "./VendorLayout";
+ import VendorDashboard from "./VendorDashboard";
++import VendorJobDetail from "./VendorJobDetail";
+ import VendorDirectory from './VendorDirectory';
+ import VendorAccess from "./VendorAccess";
+ 
+@@ -136,6 +137,7 @@ function App() {
+ 
+         <Route path="/vendor" element={<RequireRole allowed={["Vendor"]}><VendorLayout /></RequireRole>}>
+           <Route path="dashboard" element={<VendorDashboard />} />
++          <Route path="jobs/:id" element={<VendorJobDetail />} />
+           <Route path="directory" element={<VendorDirectory />} />
+         </Route>
+ 
+diff --git a/web-app/src/VendorDashboard.js b/web-app/src/VendorDashboard.js
+index 4a28301..f00428d 100644
+--- a/web-app/src/VendorDashboard.js
++++ b/web-app/src/VendorDashboard.js
+@@ -1,55 +1,168 @@
+-import { useState, useEffect } from "react";
++import { useCallback, useEffect, useState } from "react";
++import { useNavigate } from "react-router-dom";
++import { ApiError, formatMoney, statusStyle, timeAgo, vendorFetch } from "./vendorApi";
+ 
+-// copy these two lines from how PMTicketDetail.js does it
+-const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
+-const getToken = () => localStorage.getItem("token");
++// Which section of the dashboard a ticket status belongs to.
++const NEEDS_ACTION = ["quote_requested"];
++const FINISHED = ["completed", "closed", "rejected"];
++
++const EMPTY_COPY = {
++  no_vendor_profile: {
++    title: "Your account isn't linked to a vendor profile yet",
++    body: "Ask your property manager to add you in the Vendor Directory using the same email you signed in with. Your jobs will appear here as soon as that's done.",
++  },
++  vendor_inactive: {
++    title: "Your vendor profile is inactive",
++    body: "Contact your property manager to have it reactivated.",
++  },
++  none: {
++    title: "No jobs assigned yet",
++    body: "When a property manager assigns you a job it will show up here.",
++  },
++};
++
++function JobCard({ job, onOpen }) {
++  const st = statusStyle(job.status);
++  const place = [job.property_name, job.unit_number && `Unit ${job.unit_number}`].filter(Boolean).join(" · ");
++  const urgent = job.priority === "urgent" || job.priority === "high";
++  return (
++    <button type="button" style={s.card} onClick={() => onOpen(job.id)} aria-label={`Open job: ${job.job_title}`}>
++      <div style={s.cardTop}>
++        <span style={s.cardTitle}>{job.job_title}</span>
++        <span style={{ ...s.pill, background: st.bg, color: st.fg }}>{job.status_label}</span>
++      </div>
++      {job.description && <p style={s.cardDesc}>{job.description}</p>}
++      <div style={s.cardMeta}>
++        {place && <span>📍 {place}</span>}
++        {urgent && <span style={s.urgent}>{job.priority.toUpperCase()}</span>}
++        {job.quote_amount != null && <span>Quote: {formatMoney(job.quote_amount)}</span>}
++        <span style={{ marginLeft: "auto" }}>Updated {timeAgo(job.updated_at || job.created_at)}</span>
++      </div>
++      {job.can_submit_quote && <div style={s.cta}>Upload your quote →</div>}
++    </button>
++  );
++}
++
++function Section({ title, count, jobs, onOpen, accent }) {
++  if (jobs.length === 0) return null;
++  return (
++    <section style={{ marginBottom: 28 }}>
++      <h3 style={{ ...s.sectionTitle, ...(accent ? { color: "#92400e" } : {}) }}>
++        {title} <span style={s.count}>{count}</span>
++      </h3>
++      <div style={s.list}>
++        {jobs.map((j) => <JobCard key={j.id} job={j} onOpen={onOpen} />)}
++      </div>
++    </section>
++  );
++}
+ 
+ function VendorDashboard() {
+-  const username = localStorage.getItem("username") || "Vendor";
+-  const [jobs, setJobs] = useState([]);
+-  const [loading, setLoading] = useState(true);
++  const navigate = useNavigate();
++  const displayName = localStorage.getItem("display_name") || localStorage.getItem("username") || "Vendor";
++
++  const [data, setData] = useState(null);      // {vendor, jobs, reason}
+   const [error, setError] = useState("");
++  const [loading, setLoading] = useState(true);
++  const [refreshing, setRefreshing] = useState(false);
+ 
+-  useEffect(() => {
+-    fetch(`${API}/vendor/jobs`, {
+-      headers: { Authorization: `Bearer ${getToken()}` },
+-    })
+-      .then((res) => {
+-        if (!res.ok) throw new Error(`Error ${res.status}`);
+-        return res.json();
+-      })
+-      .then(setJobs)
+-      .catch((e) => setError(e.message))
+-      .finally(() => setLoading(false));
++  const load = useCallback(async (isRefresh = false) => {
++    if (isRefresh) setRefreshing(true);
++    try {
++      const body = await vendorFetch("/vendor/jobs");
++      setData(body);
++      setError("");
++    } catch (e) {
++      if (e instanceof ApiError && e.status === 401) return; // already signing out
++      setError(e.message || "Could not load your jobs.");
++    } finally {
++      setLoading(false);
++      setRefreshing(false);
++    }
+   }, []);
+ 
++  useEffect(() => { load(); }, [load]);
++
++  // Jobs are assigned by someone else while this tab sits open, so refetch
++  // whenever the vendor comes back to it.
++  useEffect(() => {
++    const onVisible = () => { if (document.visibilityState === "visible") load(true); };
++    document.addEventListener("visibilitychange", onVisible);
++    window.addEventListener("focus", onVisible);
++    return () => {
++      document.removeEventListener("visibilitychange", onVisible);
++      window.removeEventListener("focus", onVisible);
++    };
++  }, [load]);
++
++  const open = (id) => navigate(`/vendor/jobs/${id}`);
++
++  const jobs = (data && data.jobs) || [];
++  const action = jobs.filter((j) => NEEDS_ACTION.includes(j.status));
++  const finished = jobs.filter((j) => FINISHED.includes(j.status));
++  const active = jobs.filter((j) => !NEEDS_ACTION.includes(j.status) && !FINISHED.includes(j.status));
++
+   return (
+-    <div style={{ padding: 32 }}>
+-      <h2 style={{ margin: 0, color: "#0f172a" }}>Welcome, {username}</h2>
+-      <p style={{ color: "#64748b" }}>Your assigned jobs</p>
+-
+-      {loading && <p>Loading...</p>}
+-      {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+-      {!loading && !error && jobs.length === 0 && <p>No jobs assigned yet.</p>}
+-
+-      {jobs.map((j) => (
+-        <div
+-          key={j.id}
+-          style={{
+-            border: "1px solid #e5e7eb",
+-            borderRadius: 8,
+-            padding: 12,
+-            marginBottom: 8,
+-            background: "#fff",
+-          }}
+-        >
+-          <b>{j.title}</b>
+-          <p style={{ margin: "4px 0" }}>{j.description}</p>
+-          <small>{j.status.replace("_", " ")}</small>
++    <div style={s.page}>
++      <div style={s.header}>
++        <div>
++          <h2 style={s.h2}>Welcome, {(data && data.vendor && data.vendor.name) || displayName}</h2>
++          <p style={s.sub}>Your assigned jobs</p>
++        </div>
++        <button type="button" style={s.refresh} onClick={() => load(true)} disabled={refreshing}>
++          {refreshing ? "Refreshing…" : "↻ Refresh"}
++        </button>
++      </div>
++
++      {loading && <p style={s.muted}>Loading your jobs…</p>}
++
++      {error && (
++        <div style={s.errorBox} role="alert">
++          <strong>Couldn't load your jobs.</strong> {error}{" "}
++          <button type="button" style={s.linkBtn} onClick={() => load(true)}>Try again</button>
++        </div>
++      )}
++
++      {!loading && !error && data && jobs.length === 0 && (
++        <div style={s.empty}>
++          <div style={{ fontSize: 34 }}>📭</div>
++          <h3 style={{ margin: "8px 0 6px", color: "#0f172a" }}>{(EMPTY_COPY[data.reason] || EMPTY_COPY.none).title}</h3>
++          <p style={{ ...s.muted, margin: 0 }}>{(EMPTY_COPY[data.reason] || EMPTY_COPY.none).body}</p>
+         </div>
+-      ))}
++      )}
++
++      {!error && (
++        <>
++          <Section title="Needs your quote" count={action.length} jobs={action} onOpen={open} accent />
++          <Section title="In progress" count={active.length} jobs={active} onOpen={open} />
++          <Section title="Completed" count={finished.length} jobs={finished} onOpen={open} />
++        </>
++      )}
+     </div>
+   );
+ }
+ 
+-export default VendorDashboard; 
+\ No newline at end of file
++const s = {
++  page: { padding: 32, maxWidth: 900, fontFamily: "'DM Sans', sans-serif", color: "#334155" },
++  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 24 },
++  h2: { margin: 0, color: "#0f172a" },
++  sub: { margin: "4px 0 0", color: "#64748b" },
++  muted: { color: "#64748b", fontSize: 14 },
++  refresh: { border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
++  sectionTitle: { margin: "0 0 10px", fontSize: 13, letterSpacing: ".06em", textTransform: "uppercase", color: "#475569" },
++  count: { background: "#e2e8f0", color: "#334155", borderRadius: 999, padding: "1px 8px", fontSize: 12, marginLeft: 6 },
++  list: { display: "grid", gap: 10 },
++  card: { textAlign: "left", width: "100%", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, cursor: "pointer", font: "inherit", color: "inherit", boxShadow: "0 1px 2px rgba(15,23,42,.04)" },
++  cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
++  cardTitle: { fontWeight: 700, color: "#0f172a", fontSize: 16 },
++  pill: { borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" },
++  cardDesc: { margin: "8px 0 0", fontSize: 14, color: "#475569", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
++  cardMeta: { display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, fontSize: 12, color: "#64748b", alignItems: "center" },
++  urgent: { color: "#b91c1c", fontWeight: 700 },
++  cta: { marginTop: 10, color: "#4f46e5", fontWeight: 700, fontSize: 13 },
++  empty: { textAlign: "center", background: "#fff", border: "1px dashed #cbd5e1", borderRadius: 12, padding: "36px 24px" },
++  errorBox: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "12px 14px", fontSize: 14 },
++  linkBtn: { border: 0, background: "transparent", color: "#4f46e5", fontWeight: 700, cursor: "pointer", padding: 0, font: "inherit" },
++};
++
++export default VendorDashboard;
+diff --git a/web-app/src/VendorDashboard.test.js b/web-app/src/VendorDashboard.test.js
+new file mode 100644
+index 0000000..d02e8c6
+--- /dev/null
++++ b/web-app/src/VendorDashboard.test.js
+@@ -0,0 +1,161 @@
++import { render, screen, waitFor, fireEvent } from "@testing-library/react";
++import { MemoryRouter, Route, Routes } from "react-router-dom";
++import VendorDashboard from "./VendorDashboard";
++import VendorJobDetail from "./VendorJobDetail";
++
++jest.mock("./TicketComments", () => () => <div data-testid="comments" />);
++
++const job = (over = {}) => ({
++  id: "t1", title: "HVAC issue", job_title: "HVAC Repair — Unit 102, Oak Residences",
++  description: "AC not cooling", category: "HVAC", priority: "normal",
++  status: "quote_requested", status_label: "Quote Requested",
++  property_name: "Oak Residences", unit_number: "102", quote_amount: null,
++  can_submit_quote: true, created_at: "2026-09-29T10:00:00", updated_at: "2026-09-29T10:00:00",
++  ...over,
++});
++
++function mockFetch(routes) {
++  global.fetch = jest.fn(async (url, opts = {}) => {
++    const key = `${opts.method || "GET"} ${url.replace("http://localhost:8000", "")}`;
++    const h = routes[key];
++    if (!h) throw new Error(`unmocked ${key}`);
++    const { status = 200, body } = typeof h === "function" ? h(opts) : h;
++    return { ok: status < 400, status, json: async () => body };
++  });
++}
++
++const renderApp = (path) => render(
++  <MemoryRouter initialEntries={[path]}>
++    <Routes>
++      <Route path="/vendor/dashboard" element={<VendorDashboard />} />
++      <Route path="/vendor/jobs/:id" element={<VendorJobDetail />} />
++    </Routes>
++  </MemoryRouter>
++);
++
++beforeEach(() => {
++  localStorage.clear();
++  localStorage.setItem("token", "tok");
++  localStorage.setItem("display_name", "vendor");
++});
++
++test("lists jobs grouped by need, sends bearer token, shows vendor name", async () => {
++  mockFetch({
++    "GET /vendor/jobs": { body: { vendor: { id: "v", name: "Raj Electricals" }, reason: null, jobs: [
++      job(),
++      job({ id: "t2", job_title: "Roof job", status: "quote_received", status_label: "Quote Received", can_submit_quote: false, quote_amount: 4500 }),
++      job({ id: "t3", job_title: "Old job", status: "completed", status_label: "Completed", can_submit_quote: false }),
++    ] } },
++  });
++  renderApp("/vendor/dashboard");
++
++  expect(await screen.findByText("Welcome, Raj Electricals")).toBeInTheDocument();
++  expect(screen.getByText("Needs your quote")).toBeInTheDocument();
++  expect(screen.getByText("In progress")).toBeInTheDocument();
++  expect(screen.getByText("Completed", { selector: "section h3" })).toBeInTheDocument();
++  expect(screen.getByText("Upload your quote →")).toBeInTheDocument();
++  expect(screen.getByText("Quote: 4,500")).toBeInTheDocument();
++  expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer tok");
++});
++
++test("clicking a job opens its detail page", async () => {
++  mockFetch({
++    "GET /vendor/jobs": { body: { vendor: { name: "Raj" }, reason: null, jobs: [job()] } },
++    "GET /vendor/jobs/t1": { body: { ...job(), property_address: "12 Oak St", photos: [], quotes: [], timeline: [], pm: { name: "Priya", phone: "+91 90000" } } },
++  });
++  renderApp("/vendor/dashboard");
++  fireEvent.click(await screen.findByRole("button", { name: /Open job: HVAC Repair/ }));
++  expect(await screen.findByText(/12 Oak St/)).toBeInTheDocument();
++  expect(screen.getByText("Priya")).toBeInTheDocument();
++  expect(screen.getByTestId("comments")).toBeInTheDocument();
++});
++
++test.each([
++  ["no_vendor_profile", /isn't linked to a vendor profile/],
++  ["vendor_inactive", /profile is inactive/],
++  [null, /No jobs assigned yet/],
++])("empty state for reason=%s", async (reason, text) => {
++  mockFetch({ "GET /vendor/jobs": { body: { vendor: null, jobs: [], reason } } });
++  renderApp("/vendor/dashboard");
++  expect(await screen.findByText(text)).toBeInTheDocument();
++});
++
++test("API failure shows an error with retry, not a fake empty list", async () => {
++  let calls = 0;
++  mockFetch({ "GET /vendor/jobs": () => (++calls === 1
++    ? { status: 500, body: { detail: "boom" } }
++    : { body: { vendor: { name: "Raj" }, reason: null, jobs: [job()] } }) });
++  renderApp("/vendor/dashboard");
++  expect(await screen.findByRole("alert")).toHaveTextContent("boom");
++  expect(screen.queryByText(/No jobs assigned yet/)).not.toBeInTheDocument();
++  fireEvent.click(screen.getByText("Try again"));
++  expect(await screen.findByText("HVAC Repair — Unit 102, Oak Residences")).toBeInTheDocument();
++});
++
++describe("quote upload on the job page", () => {
++  const detail = (over = {}) => ({ ...job(), property_address: "12 Oak St", photos: [], quotes: [], timeline: [{ status: "open", at: "2026-09-29T09:00:00" }], pm: { name: null, phone: null }, ...over });
++  const pdf = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
++
++  test("uploads PDF + amount, then shows the submitted quote", async () => {
++    let state = detail();
++    let posted;
++    mockFetch({
++      "GET /vendor/jobs/t1": () => ({ body: state }),
++      "POST /vendor/jobs/t1/quote": (opts) => {
++        posted = opts.body;
++        state = detail({ status: "quote_received", status_label: "Quote Received", can_submit_quote: false, quote_amount: 4500,
++          quotes: [{ id: "q1", url: "http://x/quote.pdf", filename: "quote.pdf", uploaded_at: "2026-09-29T11:00:00" }] });
++        return { status: 201, body: { ok: true } };
++      },
++    });
++    renderApp("/vendor/jobs/t1");
++    await screen.findByText("Upload your quote");
++
++    const submit = screen.getByRole("button", { name: "Submit quote" });
++    expect(submit).toBeDisabled();                       // no file yet
++    fireEvent.change(screen.getByLabelText("Quote PDF"), { target: { files: [pdf] } });
++    fireEvent.change(screen.getByLabelText(/Quote amount/), { target: { value: "4500" } });
++    fireEvent.click(screen.getByRole("button", { name: "Submit quote" }));
++
++    expect(await screen.findByText(/Quote submitted/)).toBeInTheDocument();
++    expect(posted.get("file").name).toBe("quote.pdf");
++    expect(posted.get("quote_amount")).toBe("4500");
++    expect(screen.getByText("Your submitted quote")).toBeInTheDocument();
++    expect(screen.getByRole("link", { name: /quote\.pdf/ })).toHaveAttribute("href", "http://x/quote.pdf");
++    expect(screen.queryByRole("button", { name: "Submit quote" })).not.toBeInTheDocument();
++  });
++
++  test("rejects non-PDF and bad amount client-side; surfaces server errors", async () => {
++    mockFetch({
++      "GET /vendor/jobs/t1": { body: detail() },
++      "POST /vendor/jobs/t1/quote": { status: 400, body: { detail: "Please upload your quote as a PDF" } },
++    });
++    renderApp("/vendor/jobs/t1");
++    await screen.findByText("Upload your quote");
++
++    fireEvent.change(screen.getByLabelText("Quote PDF"), { target: { files: [new File(["x"], "a.png", { type: "image/png" })] } });
++    expect(screen.getByRole("alert")).toHaveTextContent("Please choose a PDF file.");
++
++    fireEvent.change(screen.getByLabelText("Quote PDF"), { target: { files: [pdf] } });
++    fireEvent.change(screen.getByLabelText(/Quote amount/), { target: { value: "-3" } });
++    fireEvent.click(screen.getByRole("button", { name: "Submit quote" }));
++    expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid amount");
++    expect(global.fetch.mock.calls.some(([, o]) => o && o.method === "POST")).toBe(false);
++
++    fireEvent.change(screen.getByLabelText(/Quote amount/), { target: { value: "100" } });
++    fireEvent.click(screen.getByRole("button", { name: "Submit quote" }));
++    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Please upload your quote as a PDF"));
++  });
++
++  test("no upload form once a quote is submitted; 404 shows job-not-found", async () => {
++    mockFetch({ "GET /vendor/jobs/t1": { body: detail({ status: "quote_received", can_submit_quote: false }) } });
++    const { unmount } = renderApp("/vendor/jobs/t1");
++    await screen.findByText("HVAC Repair — Unit 102, Oak Residences");
++    expect(screen.queryByText("Upload your quote")).not.toBeInTheDocument();
++    unmount();
++
++    mockFetch({ "GET /vendor/jobs/t1": { status: 404, body: { detail: "Job not found" } } });
++    renderApp("/vendor/jobs/t1");
++    expect(await screen.findByText("Job not found")).toBeInTheDocument();
++  });
++});
+diff --git a/web-app/src/VendorJobDetail.js b/web-app/src/VendorJobDetail.js
+new file mode 100644
+index 0000000..a03fb85
+--- /dev/null
++++ b/web-app/src/VendorJobDetail.js
+@@ -0,0 +1,274 @@
++import { useCallback, useEffect, useState } from "react";
++import { useNavigate, useParams } from "react-router-dom";
++import TicketComments from "./TicketComments";
++import { ApiError, formatDateTime, formatMoney, statusStyle, vendorFetch } from "./vendorApi";
++
++const MAX_PDF_BYTES = 10 * 1024 * 1024;
++
++const STATUS_LABELS = {
++  open: "Ticket created",
++  pm_review: "PM review",
++  quote_requested: "Quote requested",
++  quote_received: "Quote received",
++  pending_owner_approval: "Pending owner approval",
++  approved: "Approved",
++  in_progress: "In progress",
++  completed: "Completed",
++  closed: "Closed",
++  rejected: "Rejected",
++};
++
++const labelFor = (st) => STATUS_LABELS[st] || (st || "").replace(/_/g, " ");
++
++function VendorJobDetail() {
++  const { id } = useParams();
++  const navigate = useNavigate();
++
++  const [job, setJob] = useState(null);
++  const [loadError, setLoadError] = useState(null);   // {status, message}
++  const [file, setFile] = useState(null);
++  const [amount, setAmount] = useState("");
++  const [formError, setFormError] = useState("");
++  const [submitting, setSubmitting] = useState(false);
++  const [justSubmitted, setJustSubmitted] = useState(false);
++  const [lightbox, setLightbox] = useState(null);
++
++  const load = useCallback(async () => {
++    try {
++      setJob(await vendorFetch(`/vendor/jobs/${encodeURIComponent(id)}`));
++      setLoadError(null);
++    } catch (e) {
++      if (e instanceof ApiError && e.status === 401) return;
++      setLoadError({ status: e.status, message: e.message });
++    }
++  }, [id]);
++
++  useEffect(() => { load(); }, [load]);
++
++  const onPick = (e) => {
++    const f = e.target.files && e.target.files[0];
++    setFormError("");
++    if (!f) { setFile(null); return; }
++    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
++    if (!isPdf) { setFile(null); setFormError("Please choose a PDF file."); return; }
++    if (f.size > MAX_PDF_BYTES) { setFile(null); setFormError("File is too large (max 10 MB)."); return; }
++    setFile(f);
++  };
++
++  const submitQuote = async () => {
++    setFormError("");
++    if (!file) { setFormError("Please attach your quote as a PDF."); return; }
++    if (amount.trim()) {
++      const n = parseFloat(amount.replace(/,/g, ""));
++      if (!(n > 0)) { setFormError("Enter a valid amount, or leave it blank."); return; }
++    }
++    const fd = new FormData();
++    fd.append("file", file);
++    if (amount.trim()) fd.append("quote_amount", amount.trim());
++
++    setSubmitting(true);
++    try {
++      await vendorFetch(`/vendor/jobs/${encodeURIComponent(id)}/quote`, { method: "POST", body: fd });
++      setJustSubmitted(true);
++      setFile(null);
++      setAmount("");
++      await load();
++    } catch (e) {
++      if (e instanceof ApiError && e.status === 401) return;
++      setFormError(e.message || "Could not upload your quote. Please try again.");
++      // The job may have moved on (e.g. quote already submitted elsewhere).
++      if (e instanceof ApiError && e.status === 400) load();
++    } finally {
++      setSubmitting(false);
++    }
++  };
++
++  if (loadError) {
++    const gone = loadError.status === 404;
++    return (
++      <div style={s.page}>
++        <button type="button" style={s.back} onClick={() => navigate("/vendor/dashboard")}>← My Jobs</button>
++        <div style={s.errorBox} role="alert">
++          <strong>{gone ? "Job not found" : "Couldn't load this job"}</strong>
++          <p style={{ margin: "6px 0 0" }}>
++            {gone ? "It may have been reassigned, or the link is wrong." : loadError.message}
++          </p>
++          {!gone && <button type="button" style={s.linkBtn} onClick={load}>Try again</button>}
++        </div>
++      </div>
++    );
++  }
++  if (!job) return <div style={s.page}><p style={s.muted}>Loading…</p></div>;
++
++  const st = statusStyle(job.status);
++  const place = [job.property_name, job.property_address].filter(Boolean).join(" — ");
++  const telHref = job.pm && job.pm.phone ? `tel:${job.pm.phone.replace(/[^\d+]/g, "")}` : null;
++
++  return (
++    <div style={s.page}>
++      <button type="button" style={s.back} onClick={() => navigate("/vendor/dashboard")}>← My Jobs</button>
++
++      <div style={s.card}>
++        <div style={s.titleRow}>
++          <h2 style={s.h2}>{job.job_title}</h2>
++          <span style={{ ...s.pill, background: st.bg, color: st.fg }}>{job.status_label}</span>
++        </div>
++        {place && <p style={s.line}>📍 {place}</p>}
++        <p style={s.line}>
++          {job.category && <>Category: <b>{job.category}</b></>}
++          {job.priority && <> &nbsp;·&nbsp; Priority: <b style={job.priority === "urgent" ? { color: "#b91c1c" } : undefined}>{job.priority}</b></>}
++        </p>
++        {job.description && <p style={s.desc}>{job.description}</p>}
++      </div>
++
++      {job.can_submit_quote && (
++        <div style={{ ...s.card, borderColor: "#fcd34d", background: "#fffbeb" }}>
++          <h3 style={s.h3}>Upload your quote</h3>
++          <label style={{ ...s.drop, ...(file ? s.dropHas : null) }}>
++            <input type="file" accept="application/pdf,.pdf" onChange={onPick} style={s.fileInput} aria-label="Quote PDF" />
++            {file ? (
++              <>
++                <strong>📄 {file.name}</strong>
++                <span style={s.muted}>{(file.size / 1024 / 1024).toFixed(2)} MB — click to change</span>
++              </>
++            ) : (
++              <>
++                <strong>📎 Choose quote PDF</strong>
++                <span style={s.muted}>PDF only, up to 10 MB</span>
++              </>
++            )}
++          </label>
++
++          <label style={s.label} htmlFor="vj-amount">Quote amount (optional)</label>
++          <input id="vj-amount" style={s.input} type="text" inputMode="decimal" placeholder="e.g. 4500"
++                 value={amount} onChange={(e) => setAmount(e.target.value)} />
++
++          {formError && <p style={s.err} role="alert">{formError}</p>}
++          <button type="button" style={{ ...s.primary, opacity: submitting || !file ? 0.6 : 1 }}
++                  onClick={submitQuote} disabled={submitting || !file}>
++            {submitting ? "Uploading…" : "Submit quote"}
++          </button>
++        </div>
++      )}
++
++      {justSubmitted && !job.can_submit_quote && (
++        <div style={{ ...s.card, background: "#f0fdf4", borderColor: "#86efac" }} role="status">
++          <strong>✅ Quote submitted.</strong>
++          <p style={{ ...s.muted, margin: "6px 0 0" }}>The property manager has been notified and will review it.</p>
++        </div>
++      )}
++
++      {job.quotes && job.quotes.length > 0 && (
++        <div style={s.card}>
++          <h3 style={s.h3}>Your submitted quote{job.quotes.length > 1 ? "s" : ""}</h3>
++          {job.quote_amount != null && <p style={s.line}>Amount: <b>{formatMoney(job.quote_amount)}</b></p>}
++          {job.quotes.map((q) => (
++            <p key={q.id} style={s.line}>
++              <a href={q.url} target="_blank" rel="noopener noreferrer" style={s.link}>📄 {q.filename}</a>
++              <span style={s.muted}> · {formatDateTime(q.uploaded_at)}</span>
++            </p>
++          ))}
++        </div>
++      )}
++
++      {job.photos && job.photos.length > 0 && (
++        <div style={s.card}>
++          <h3 style={s.h3}>Photos ({job.photos.length})</h3>
++          <div style={s.gallery}>
++            {job.photos.map((p) => (
++              <button key={p.id} type="button" style={s.thumb} onClick={() => setLightbox(p.url)} aria-label={`Open photo ${p.filename}`}>
++                <img src={p.url} alt={p.filename} style={s.thumbImg} loading="lazy" />
++              </button>
++            ))}
++          </div>
++        </div>
++      )}
++
++      {job.pm && job.pm.name && (
++        <div style={s.card}>
++          <h3 style={s.h3}>Property manager</h3>
++          <div style={s.pmRow}>
++            <div>
++              <div style={{ fontWeight: 700, color: "#0f172a" }}>{job.pm.name}</div>
++              {job.pm.phone && <div style={s.muted}>{job.pm.phone}</div>}
++            </div>
++            {telHref && <a href={telHref} style={s.callBtn}>📞 Call</a>}
++          </div>
++        </div>
++      )}
++
++      <div style={s.card}>
++        <TicketComments ticketId={job.id} role="Vendor" styles={commentsStyles} />
++      </div>
++
++      {job.timeline && job.timeline.length > 0 && (
++        <div style={s.card}>
++          <h3 style={s.h3}>Progress</h3>
++          <ol style={s.timeline}>
++            {job.timeline.map((t, i) => (
++              <li key={`${t.status}-${i}`} style={s.tlItem}>
++                <b>{labelFor(t.status)}</b> <span style={s.muted}>· {formatDateTime(t.at)}</span>
++              </li>
++            ))}
++          </ol>
++        </div>
++      )}
++
++      {lightbox && (
++        <div style={s.lightbox} onClick={() => setLightbox(null)} role="dialog" aria-modal="true">
++          <button type="button" style={s.close} onClick={() => setLightbox(null)} aria-label="Close">×</button>
++          <img src={lightbox} alt="Job" style={s.lightboxImg} onClick={(e) => e.stopPropagation()} />
++        </div>
++      )}
++    </div>
++  );
++}
++
++const commentsStyles = {
++  section: {}, sectionLabel: { margin: 0, fontSize: 17, fontWeight: 700, color: "#0f172a" },
++  sectionSub: { color: "#64748b", fontSize: 13 }, muted: { color: "#64748b", fontSize: 13 },
++  commentList: { display: "grid", gap: 10 }, commentCard: { border: "1px solid #e2e8f0", borderRadius: 10, padding: 12 },
++  commentHeader: { display: "flex", gap: 8 }, commentAuthor: { color: "#0f172a" }, commentRole: { color: "#64748b", fontSize: 12 },
++  commentBody: { color: "#334155", whiteSpace: "pre-wrap" }, commentFooter: { display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 12 },
++  visibilityBadge: { color: "#4f46e5" }, commentForm: { marginTop: 16 },
++  textarea: { width: "100%", boxSizing: "border-box", padding: 10, border: "1px solid #cbd5e1", borderRadius: 8 },
++  commentFormActions: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 },
++  visibilitySelect: { padding: 8, borderRadius: 8, border: "1px solid #cbd5e1" },
++  sendButton: { background: "#4f46e5", color: "#fff", border: 0, borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: "pointer" },
++  errorText: { color: "#dc2626", fontSize: 13 }, successText: { color: "#059669", fontSize: 13 },
++};
++
++const s = {
++  page: { padding: 32, maxWidth: 820, fontFamily: "'DM Sans', sans-serif", color: "#334155" },
++  back: { border: 0, background: "transparent", color: "#4f46e5", cursor: "pointer", padding: 0, marginBottom: 16, fontWeight: 700, font: "inherit" },
++  card: { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 18, marginBottom: 16, boxShadow: "0 1px 2px rgba(15,23,42,.04)" },
++  titleRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
++  h2: { margin: 0, color: "#0f172a", fontSize: 22 },
++  h3: { margin: "0 0 12px", color: "#0f172a", fontSize: 16 },
++  pill: { borderRadius: 999, padding: "4px 12px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" },
++  line: { margin: "8px 0 0", fontSize: 14 },
++  desc: { margin: "14px 0 0", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" },
++  muted: { color: "#64748b", fontSize: 13 },
++  drop: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, minHeight: 90, padding: 14, border: "2px dashed #94a3b8", borderRadius: 12, background: "#fff", textAlign: "center", cursor: "pointer", boxSizing: "border-box" },
++  dropHas: { borderStyle: "solid", borderColor: "#16a34a", background: "#f0fdf4" },
++  fileInput: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" },
++  label: { display: "block", fontSize: 14, fontWeight: 600, margin: "14px 0 6px" },
++  input: { width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 15, boxSizing: "border-box", background: "#fff" },
++  err: { color: "#b91c1c", fontSize: 14, margin: "10px 0 0" },
++  primary: { marginTop: 16, background: "#4f46e5", color: "#fff", border: 0, borderRadius: 8, padding: "11px 20px", fontWeight: 700, fontSize: 15, cursor: "pointer" },
++  link: { color: "#4f46e5", fontWeight: 600, textDecoration: "none" },
++  gallery: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 },
++  thumb: { padding: 0, border: 0, background: "#e2e8f0", borderRadius: 8, overflow: "hidden", aspectRatio: "1 / 1", cursor: "pointer" },
++  thumbImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
++  pmRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
++  callBtn: { background: "#16a34a", color: "#fff", borderRadius: 8, padding: "9px 16px", fontWeight: 700, textDecoration: "none", fontSize: 14 },
++  timeline: { margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 14 },
++  tlItem: { color: "#334155" },
++  errorBox: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "14px 16px", fontSize: 14 },
++  linkBtn: { border: 0, background: "transparent", color: "#4f46e5", fontWeight: 700, cursor: "pointer", padding: "8px 0 0", font: "inherit" },
++  lightbox: { position: "fixed", inset: 0, background: "rgba(15,23,42,.92)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 },
++  lightboxImg: { maxWidth: "100%", maxHeight: "100%", borderRadius: 8 },
++  close: { position: "absolute", top: 12, right: 12, width: 44, height: 44, borderRadius: 22, border: 0, background: "#fff", fontSize: 22, cursor: "pointer" },
++};
++
++export default VendorJobDetail;
+diff --git a/web-app/src/vendorApi.js b/web-app/src/vendorApi.js
+new file mode 100644
+index 0000000..2cb5188
+--- /dev/null
++++ b/web-app/src/vendorApi.js
+@@ -0,0 +1,105 @@
++// Shared helpers for the logged-in vendor pages (VendorDashboard, VendorJobDetail).
++export const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
++
++export class ApiError extends Error {
++  constructor(status, message, code) {
++    super(message);
++    this.status = status;
++    this.code = code || "error";
++  }
++}
++
++// Backend sends either "detail": "text" or "detail": {code, message}.
++function readDetail(body, fallback) {
++  const d = body && body.detail;
++  if (!d) return { code: "error", message: fallback };
++  if (typeof d === "string") return { code: "error", message: d };
++  if (Array.isArray(d)) return { code: "error", message: d.map((x) => x.msg).join("; ") || fallback };
++  return { code: d.code || "error", message: d.message || fallback };
++}
++
++export function signOut() {
++  const slug = localStorage.getItem("company_slug");
++  localStorage.clear();
++  window.location.assign(slug ? `/portal/${slug}` : "/");
++}
++
++// Authenticated fetch. An expired/invalid session (401) signs the vendor out
++// instead of leaving a page that silently shows stale or empty data.
++export async function vendorFetch(path, options = {}) {
++  const headers = { ...(options.headers || {}) };
++  const token = localStorage.getItem("token");
++  if (token) headers.Authorization = `Bearer ${token}`;
++
++  let res;
++  try {
++    res = await fetch(`${API}${path}`, { ...options, headers });
++  } catch {
++    throw new ApiError(0, "Could not reach the server. Check your connection and try again.", "network");
++  }
++
++  let body = null;
++  try {
++    body = await res.json();
++  } catch {
++    /* empty or non-JSON body */
++  }
++
++  if (res.status === 401) {
++    signOut();
++    throw new ApiError(401, "Your session has expired. Please sign in again.", "unauthorized");
++  }
++  if (!res.ok) {
++    const { code, message } = readDetail(body, `Request failed (${res.status})`);
++    throw new ApiError(res.status, message, code);
++  }
++  return body;
++}
++
++// Server timestamps are naive UTC with no "Z"; without it the browser reads
++// them as local time and everything looks hours old east of UTC.
++export function parseServerTimestamp(value) {
++  if (!value) return null;
++  const s = typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? `${value}Z` : value;
++  const d = new Date(s);
++  return Number.isNaN(d.getTime()) ? null : d;
++}
++
++export function timeAgo(value) {
++  const d = parseServerTimestamp(value);
++  if (!d) return "";
++  const sec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
++  if (sec < 60) return "just now";
++  const min = Math.floor(sec / 60);
++  if (min < 60) return `${min} min ago`;
++  const hr = Math.floor(min / 60);
++  if (hr < 24) return `${hr} hr ago`;
++  const day = Math.floor(hr / 24);
++  if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
++  return d.toLocaleDateString();
++}
++
++export function formatDateTime(value) {
++  const d = parseServerTimestamp(value);
++  return d ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
++}
++
++export function formatMoney(n) {
++  if (n === null || n === undefined) return "";
++  return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
++}
++
++export const STATUS_STYLES = {
++  quote_requested: { bg: "#fef3c7", fg: "#92400e" },
++  quote_received: { bg: "#e0f2fe", fg: "#075985" },
++  pending_owner_approval: { bg: "#ede9fe", fg: "#5b21b6" },
++  approved: { bg: "#dcfce7", fg: "#166534" },
++  in_progress: { bg: "#dbeafe", fg: "#1e40af" },
++  completed: { bg: "#f1f5f9", fg: "#475569" },
++  closed: { bg: "#f1f5f9", fg: "#475569" },
++  rejected: { bg: "#fee2e2", fg: "#991b1b" },
++};
++
++export function statusStyle(status) {
++  return STATUS_STYLES[status] || { bg: "#f1f5f9", fg: "#475569" };
++}

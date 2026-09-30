@@ -22,3 +22,5 @@ auth-backend/uploads/
 auth-backend/app.db
 propos-maintenance-sync.patch
 auth_data.sql
+
+nohup.out

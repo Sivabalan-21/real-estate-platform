@@ -56,7 +56,7 @@ function VendorModal({ vendor, onClose, onSaved }) {
           }),
         }
       );
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // FastAPI validation errors come back as an array in `detail`
         setError(

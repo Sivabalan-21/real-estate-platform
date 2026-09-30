@@ -1,9 +1,11 @@
 from datetime import datetime
 from uuid import uuid4
-
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, String, Float, Date, Boolean, Text
+import uuid
 from sqlalchemy.orm import relationship
 from database import Base
+from sqlalchemy import Column, String, Integer, Boolean, Float, Text, ForeignKey
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Float, Date, Boolean, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import UUID
 
 
 def uuid_str():
@@ -55,9 +57,31 @@ class Vendor(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # The portal login (users row, role "Vendor") that acts for this vendor.
+    # Nullable: directory-only vendors (no account) still exist and keep using
+    # the emailed token link. Unique: one login <-> one vendor profile.
+    user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
     company = relationship("Company", backref="vendors")
+    user = relationship("User", foreign_keys=[user_id])
     tickets = relationship("MaintenanceTicket", back_populates="assigned_vendor")
 
+
+# Matches the index created by migration j4k5l6m7n8o9: one email per company,
+# case-insensitive. Blank emails are NULL and never collide.
+Index(
+    "uq_vendors_company_email",
+    Vendor.company_id,
+    func.lower(Vendor.email),
+    unique=True,
+    postgresql_where=Vendor.email.isnot(None),
+)
 
 class VendorTicketAccess(Base):
     """Secure, expiring link that lets a vendor (no account) see ONE ticket.
@@ -472,7 +496,6 @@ class Lease(Base):
         String,
         ForeignKey("units.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True,
     )
 
@@ -526,6 +549,15 @@ class Lease(Base):
         "User",
         foreign_keys=[tenant_username],
     )
+
+# Matches migration 9a1f3c7e2b40: one ACTIVE lease per unit; terminated or
+# expired leases can pile up as history.
+Index(
+    "ix_leases_unit_id_active",
+    Lease.unit_id,
+    unique=True,
+    postgresql_where=text("status = 'active'"),
+)
 
 
 class UnitPhoto(Base):

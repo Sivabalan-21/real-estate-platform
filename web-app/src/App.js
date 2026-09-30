@@ -43,6 +43,7 @@ import TenantPayments from "./TenantPayments";
 
 import VendorLayout from "./VendorLayout";
 import VendorDashboard from "./VendorDashboard";
+import VendorJobDetail from "./VendorJobDetail";
 import VendorDirectory from './VendorDirectory';
 import VendorAccess from "./VendorAccess";
 
@@ -136,6 +137,7 @@ function App() {
 
         <Route path="/vendor" element={<RequireRole allowed={["Vendor"]}><VendorLayout /></RequireRole>}>
           <Route path="dashboard" element={<VendorDashboard />} />
+          <Route path="jobs/:id" element={<VendorJobDetail />} />
           <Route path="directory" element={<VendorDirectory />} />
         </Route>
 

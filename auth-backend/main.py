@@ -1,16 +1,19 @@
 from datetime import datetime
 import os
+import re
 import uuid
 
 import bcrypt
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Form
 from typing import List
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema
 from jose import JWTError, jwt
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -42,8 +45,9 @@ from schemas import (
     AssignVendorRequest,
 )
 from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, _get_pm_users as get_ticket_pm_users
-from ticket_states import TICKET_STATUS_FILTERS, PENDING_OWNER_APPROVAL
+from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
+from services.vendor_service import get_vendor_for_user
 from services.user_service import (
     backfill_companies,
     complete_registration,
@@ -112,11 +116,29 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(401, "Invalid token")
 
 
+def _vendor_may_access(request: Request) -> bool:
+    """Vendor logins are default-deny: they may only reach their own portal
+    endpoints, their profile, the vendor directory (read) and the comment
+    thread of a ticket (further limited to assigned tickets in
+    _authorize_ticket_access). Everything else is company data they have no
+    business seeing (tickets, leases, tenants, properties...)."""
+    path, method = request.url.path, request.method
+    if path.startswith("/vendor/") or path == "/users/me":
+        return True
+    if path == "/vendors" and method == "GET":
+        return True
+    return bool(re.fullmatch(r"/tickets/[^/]+/comments(/[^/]+)?", path))
+
+
 def current_user(
+    request: Request,
     payload: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    return get_current_user(db, payload)
+    user = get_current_user(db, payload)
+    if user.role == ROLE_VENDOR and not _vendor_may_access(request):
+        raise HTTPException(403, "Not authorized")
+    return user
 
 
 def verify_password(plain: str, hashed: str):
@@ -1723,6 +1745,10 @@ def _authorize_ticket_access(
         db, user.username, ticket.property_id
     ):
         raise HTTPException(403, "Not authorized for this ticket")
+    if user.role == ROLE_VENDOR:
+        vendor = get_vendor_for_user(db, user)
+        if not (vendor and vendor.is_active and ticket.assigned_vendor_id == vendor.id):
+            raise HTTPException(403, "Not authorized for this ticket")
 
 
 def serialize_ticket_comment(comment: TicketComment):
@@ -2348,6 +2374,25 @@ def serialize_pm_ticket_detail(ticket: MaintenanceTicket, db: Session):
     )
     return data
 
+VENDOR_EMAIL_TAKEN = "A vendor with this email already exists (it may be deactivated)."
+
+
+def _normalize_email(email: str | None) -> str | None:
+    email = (email or "").strip()
+    return email or None  # "" -> NULL, so blank emails never collide
+
+
+def _vendor_email_taken(db: Session, company_id: str, email: str | None, exclude_id: str | None = None) -> bool:
+    if not email:
+        return False
+    q = db.query(Vendor.id).filter(
+        Vendor.company_id == company_id,
+        func.lower(Vendor.email) == email.lower(),
+    )
+    if exclude_id:
+        q = q.filter(Vendor.id != exclude_id)
+    return q.first() is not None
+
 
 @app.post("/vendors", status_code=201)
 def create_vendor(
@@ -2362,17 +2407,25 @@ def create_vendor(
     if data.category not in VendorCategory.ALL:
         raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
 
+    email = _normalize_email(data.email)
+    if _vendor_email_taken(db, user.company_id, email):
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
+
     vendor = Vendor(
         company_id=user.company_id,
         name=data.name,
         category=data.category,
         phone=data.phone,
-        email=data.email,
+        email=email,
         website=data.website,
         notes=data.notes,
     )
     db.add(vendor)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # two requests racing past the check above
+        db.rollback()
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
     db.refresh(vendor)
     return serialize_vendor(vendor)
 
@@ -2420,13 +2473,22 @@ def update_vendor(
     if data.category is not None and data.category not in VendorCategory.ALL:
         raise HTTPException(400, f"Invalid category. Must be one of {VendorCategory.ALL}")
 
-    for field in ("name", "category", "phone", "email", "website", "notes", "is_active"):
+    if data.email is not None:
+        new_email = _normalize_email(data.email)
+        if _vendor_email_taken(db, vendor.company_id, new_email, exclude_id=vendor.id):
+            raise HTTPException(409, VENDOR_EMAIL_TAKEN)
+        vendor.email = new_email
+
+    for field in ("name", "category", "phone", "website", "notes", "is_active"):
         value = getattr(data, field)
         if value is not None:
             setattr(vendor, field, value)
 
-    db.commit()
-    db.refresh(vendor)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, VENDOR_EMAIL_TAKEN)
     return serialize_vendor(vendor)
 
 
@@ -3186,12 +3248,7 @@ def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
 
     prop = ticket.property
     unit = ticket.unit
-    category = ticket.category or "Maintenance"
-    place = prop.name if prop else "Property"
-    if unit:
-        job_title = f"{category} Repair \u2014 Unit {unit.unit_number}, {place}"
-    else:
-        job_title = f"{category} Repair \u2014 {place}"
+    job_title = _vendor_job_title(ticket)
 
     photos = (
         db.query(TicketAttachment)
@@ -3224,18 +3281,16 @@ def vendor_access_ticket(token: str, db: Session = Depends(get_db)):
     }
 
 
-@app.post("/vendor-access/{token}/upload", status_code=201)
-async def vendor_upload_quote(
-    token: str,
-    file: UploadFile = File(...),
-    quote_amount: str | None = Form(None),
-    db: Session = Depends(get_db),
+async def _store_vendor_quote(
+    db: Session,
+    ticket: MaintenanceTicket,
+    vendor: Vendor,
+    file: UploadFile,
+    quote_amount: str | None,
 ):
-    """Vendor uploads a PDF quote: stored as a TicketAttachment(type='quote'),
-    optional amount saved to ticket.quote_amount, ticket -> quote_received,
-    PM notified."""
-    access, ticket, vendor = _resolve_vendor_access(token, db)
-
+    """Validate + persist a vendor's PDF quote and move the ticket to
+    quote_received. Shared by the emailed-token portal and the logged-in
+    vendor dashboard so both enforce identical rules."""
     if ticket.status != "quote_requested":
         raise HTTPException(400, "A quote has already been submitted for this job")
 
@@ -3291,3 +3346,180 @@ async def vendor_upload_quote(
         "quote_amount": ticket.quote_amount,
         "attachment": serialize_attachment(attachment),
     }
+
+
+# ---------------------------------------------------------------------------
+# Vendor dashboard (logged-in vendor account): job list, job detail, quote
+# upload. Same rules as the emailed-token portal above, but authenticated by
+# the vendor's own login and scoped to the vendor profile linked to it.
+# ---------------------------------------------------------------------------
+def _vendor_job_title(ticket: MaintenanceTicket) -> str:
+    prop = ticket.property
+    unit = ticket.unit
+    category = ticket.category or "Maintenance"
+    place = prop.name if prop else "Property"
+    if unit:
+        return f"{category} Repair \u2014 Unit {unit.unit_number}, {place}"
+    return f"{category} Repair \u2014 {place}"
+
+
+def _vendor_job_summary(ticket: MaintenanceTicket) -> dict:
+    return {
+        "id": ticket.id,
+        "title": ticket.title,
+        "job_title": _vendor_job_title(ticket),
+        "description": ticket.description,
+        "category": ticket.category,
+        "priority": ticket.priority,
+        "status": ticket.status,
+        "status_label": TICKET_STATE_LABELS.get(
+            ticket.status, (ticket.status or "").replace("_", " ").title()
+        ),
+        "property_name": ticket.property.name if ticket.property else None,
+        "unit_number": ticket.unit.unit_number if ticket.unit else None,
+        "quote_amount": ticket.quote_amount,
+        "can_submit_quote": ticket.status == "quote_requested",
+        "created_at": ticket.created_at,
+        "updated_at": ticket.updated_at,
+    }
+
+
+def current_vendor(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Vendor:
+    """The active vendor profile behind the logged-in Vendor account."""
+    if user.role != ROLE_VENDOR:
+        raise HTTPException(403, "Vendors only")
+    vendor = get_vendor_for_user(db, user)
+    if not vendor:
+        raise _vendor_error(
+            403, "no_vendor_profile",
+            "Your login is not linked to a vendor profile yet. "
+            "Ask your property manager to add you in the Vendor Directory.",
+        )
+    if not vendor.is_active:
+        raise _vendor_error(
+            403, "vendor_inactive",
+            "Your vendor profile is inactive. Contact your property manager.",
+        )
+    return vendor
+
+
+def _vendor_ticket_or_404(db: Session, vendor: Vendor, ticket_id: str) -> MaintenanceTicket:
+    """404 (not 403) for anything not assigned to this vendor, so a vendor
+    can't probe which ticket ids exist."""
+    ticket = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.id == ticket_id,
+        MaintenanceTicket.company_id == vendor.company_id,
+        MaintenanceTicket.assigned_vendor_id == vendor.id,
+    ).first()
+    if not ticket:
+        raise HTTPException(404, "Job not found")
+    return ticket
+
+
+@app.get("/vendor/jobs")
+def get_vendor_jobs(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Jobs assigned to the logged-in vendor, newest activity first.
+
+    Always 200 for a Vendor login. `reason` tells the dashboard why the list
+    is empty when it is not simply "nothing assigned yet"."""
+    if user.role != ROLE_VENDOR:
+        raise HTTPException(403, "Vendors only")
+
+    vendor = get_vendor_for_user(db, user)
+    if not vendor:
+        return {"vendor": None, "jobs": [], "reason": "no_vendor_profile"}
+
+    brief = {"id": vendor.id, "name": vendor.name, "category": vendor.category}
+    if not vendor.is_active:
+        return {"vendor": brief, "jobs": [], "reason": "vendor_inactive"}
+
+    tickets = (
+        db.query(MaintenanceTicket)
+        .filter(
+            MaintenanceTicket.company_id == vendor.company_id,
+            MaintenanceTicket.assigned_vendor_id == vendor.id,
+        )
+        .order_by(MaintenanceTicket.updated_at.desc(), MaintenanceTicket.created_at.desc())
+        .all()
+    )
+    return {"vendor": brief, "jobs": [_vendor_job_summary(t) for t in tickets], "reason": None}
+
+
+@app.get("/vendor/jobs/{ticket_id}")
+def get_vendor_job(
+    ticket_id: str,
+    vendor: Vendor = Depends(current_vendor),
+    db: Session = Depends(get_db),
+):
+    """Job detail for the vendor. Never includes tenant identity, PM notes,
+    internal comments or other vendors' quotes."""
+    ticket = _vendor_ticket_or_404(db, vendor, ticket_id)
+
+    attachments = (
+        db.query(TicketAttachment)
+        .filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.type.in_(("photo", "quote")))
+        .order_by(TicketAttachment.uploaded_at.asc())
+        .all()
+    )
+    photos = [a for a in attachments if a.type == "photo"]
+    # Only quotes this vendor uploaded themselves.
+    quotes = [
+        a for a in attachments
+        if a.type == "quote" and a.uploaded_by == f"vendor:{vendor.name}"
+    ]
+
+    pms = get_ticket_pm_users(ticket, db)
+    pm = pms[0] if pms else None
+    prop = ticket.property
+
+    data = _vendor_job_summary(ticket)
+    data.update({
+        "property_address": prop.address if prop else None,
+        "photos": [{"id": a.id, "url": a.url, "filename": a.filename} for a in photos],
+        "quotes": [
+            {"id": a.id, "url": a.url, "filename": a.filename, "uploaded_at": a.uploaded_at}
+            for a in quotes
+        ],
+        "pm": {
+            "name": (pm.full_name or pm.username) if pm else None,
+            "phone": pm.phone if pm else None,
+        },
+        # Status + time only: history notes and actors can hold internal PM text.
+        "timeline": [
+            {"status": h.to_status, "at": h.created_at}
+            for h in sorted(ticket.history, key=lambda h: h.created_at)
+        ],
+    })
+    return data
+
+
+@app.post("/vendor/jobs/{ticket_id}/quote", status_code=201)
+async def vendor_job_upload_quote(
+    ticket_id: str,
+    file: UploadFile = File(...),
+    quote_amount: str | None = Form(None),
+    vendor: Vendor = Depends(current_vendor),
+    db: Session = Depends(get_db),
+):
+    ticket = _vendor_ticket_or_404(db, vendor, ticket_id)
+    return await _store_vendor_quote(db, ticket, vendor, file, quote_amount)
+
+
+@app.post("/vendor-access/{token}/upload", status_code=201)
+async def vendor_upload_quote(
+    token: str,
+    file: UploadFile = File(...),
+    quote_amount: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Vendor uploads a PDF quote via the emailed link (no login): stored as a
+    TicketAttachment(type='quote'), optional amount saved to
+    ticket.quote_amount, ticket -> quote_received, PM notified."""
+    access, ticket, vendor = _resolve_vendor_access(token, db)
+    return await _store_vendor_quote(db, ticket, vendor, file, quote_amount)
