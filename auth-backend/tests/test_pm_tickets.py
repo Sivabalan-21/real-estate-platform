@@ -610,3 +610,24 @@ def test_needs_attention_is_pm_only(db_session, company_a, client_factory):
     tenant = make_tenant(db_session, company_a, "tenant_no_access")
     res = client_factory(tenant).get("/pm/tickets/needs-attention")
     assert res.status_code == 403
+
+def test_ticket_total_over_20mb_is_rejected(db_session, company_a, client_factory):
+    pm = make_pm(db_session, company_a, "pm_total_limit")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    client = client_factory(pm)
+    url = f"/tickets/{ticket.id}/attachments"
+
+    # Vendor-type quotes have no count cap, so use them to fill the 20MB budget.
+    big = b"%PDF-" + b"x" * (9 * 1024 * 1024)
+    for name in ("a.pdf", "b.pdf"):                      # 18 MB: allowed
+        r = client.post(url, files=[("files", (name, big, "application/pdf"))],
+                        data={"attachment_type": "quote"})
+        assert r.status_code == 201
+
+    r = client.post(url, files=[("files", ("c.pdf", big, "application/pdf"))],
+                    data={"attachment_type": "quote"})   # would be 27 MB
+    assert r.status_code == 400
+    assert "20MB" in r.json()["detail"]
