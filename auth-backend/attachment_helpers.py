@@ -73,19 +73,24 @@ def _item(a):
         "size_kb": a.size_kb or 0,
         "version": a.version or 0,
     }
+OWNER_INVOICE_STATUSES = ("approved", "in_progress", "completed", "closed")
 
 
-def group_attachments(rows, role) -> dict:
-    allowed = VISIBLE_GROUPS[role_key(role)]
+def group_attachments(rows, role, ticket_status=None) -> dict:
+    key = role_key(role)
+    allowed = set(VISIBLE_GROUPS[key])
+    # Owners audit quote vs invoice after approval, never during the approval decision.
+    if key == "owner" and ticket_status in OWNER_INVOICE_STATUSES:
+        allowed.add("invoices")
+
     out = {"photos": [], "quotes": [], "invoices": [], "pm_notes": []}
-
     quote_idx = 0
-    for a in sorted(rows, key=lambda r: r.uploaded_at):   # oldest first
+    for a in sorted(rows, key=lambda r: r.uploaded_at):
         group = GROUP_OF.get(str(a.type).lower())
         if group is None:
             continue
         if group == "quotes":
-            quote_idx += 1            # old rows without a stored version still get v1, v2...
+            quote_idx += 1
         if group not in allowed:
             continue
         item = _item(a)
@@ -93,6 +98,6 @@ def group_attachments(rows, role) -> dict:
             item["version"] = a.version or quote_idx
         out[group].append(item)
 
-    for g in out:                      # newest first in every tab
+    for g in out:
         out[g].reverse()
     return out

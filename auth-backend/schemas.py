@@ -171,6 +171,9 @@ class TicketTransitionRequest(BaseModel):
     new_status: str
     note: Optional[str] = None
 
+class TicketRatingRequest(BaseModel):
+    """Body for POST /tickets/{id}/rate."""
+    rating: int
 
 class TicketCreate(BaseModel):
     """Day 14 richer create, used by POST /tickets. property_id lives in the

@@ -3,7 +3,7 @@ import os
 import traceback
 
 from models import User, PropertyAssignment
-from rbac import ROLE_OWNER
+from rbac import ROLE_OWNER,ROLE_TENANT
 from ticket_states import PENDING_OWNER_APPROVAL
 print("[notify] notify_ticket_created called, MAIL_SERVER =", os.getenv("MAIL_SERVER"))
 CURRENCY = "₹"              # change if your quotes use another currency
@@ -160,6 +160,45 @@ async def maybe_notify_quote_submitted(ticket, db, old_status):
     if old_status != ticket.status and ticket.status == PENDING_OWNER_APPROVAL:
         await notify_quote_submitted(ticket, db)
 
+async def notify_ticket_closed(ticket, db):
+    """Tell the tenant their ticket is closed and invite a rating. Never raises."""
+    try:
+        tenant = (
+            db.query(User).filter(User.username == ticket.created_by).first()
+            if ticket.created_by else None
+        )
+        if not tenant or tenant.role != ROLE_TENANT:
+            print(f"[notify] ticket {ticket.id}: not raised by a tenant, skipping closed email")
+            return
+
+        place = _place(ticket)
+        link = f"{_frontend_url()}/tenant/maintenance/{ticket.id}"  # TODO: confirm tenant route
+        subject = f"Maintenance Request Closed - {place}"
+        body = f"""
+Hi {_display_name(tenant)},
+
+Your maintenance request has been completed and closed.
+
+Property : {place}
+Category : {ticket.category or "-"}
+Issue    : {(ticket.description or "-")[:200]}
+
+How did we do? Please rate the work:
+{link}
+
+Regards,
+Property Portal Team
+"""
+        await _send(tenant.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_ticket_closed error: {exc}")
+        traceback.print_exc()
+
+
+async def maybe_notify_ticket_closed(ticket, db, old_status):
+    """Call after a status change is committed. Emails only on the move INTO 'closed'."""
+    if old_status != ticket.status and ticket.status == "closed":
+        await notify_ticket_closed(ticket, db)
 
 async def notify_quote_received_pm(ticket, db, vendor_name: str):
     """Tell the ticket's PM(s) a vendor just uploaded a quote. Never raises."""

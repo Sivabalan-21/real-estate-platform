@@ -280,3 +280,85 @@ def test_comments_only_on_assigned_tickets(api, world):
 def test_other_roles_unaffected_by_vendor_default_deny(api, world):
     assert api.get("/properties", headers=_hdr(world.pm)).status_code == 200
     assert api.get(f"/tickets/{world.mine.id}", headers=_hdr(world.pm)).status_code == 200
+
+def _invoice(api, user, ticket_id, content=b"%PDF-1.4 invoice", filename="invoice.pdf"):
+    return api.post(
+        f"/vendor/jobs/{ticket_id}/invoice",
+        headers=_hdr(user),
+        files={"file": (filename, content, "application/pdf")},
+    )
+
+
+def _set_status(db_session, ticket, status):
+    ticket.status = status
+    db_session.commit()
+
+
+def test_invoice_upload_stored_as_vendor_invoice(api, db_session, world):
+    _set_status(db_session, world.mine, "completed")
+    r = _invoice(api, world.vuser, world.mine.id)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["type"] == "invoice"
+    assert body["uploaded_by_role"] == "vendor"
+    assert body["size_kb"] >= 1
+
+    rows = db_session.query(TicketAttachment).filter_by(
+        ticket_id=world.mine.id, type="invoice"
+    ).all()
+    assert len(rows) == 1
+    db_session.refresh(world.mine)
+    assert world.mine.status == "completed"      # invoice upload never changes status
+
+
+def test_invoice_allowed_while_completed_and_multiple_invoices(api, db_session, world):
+    _set_status(db_session, world.mine, "completed")
+    assert _invoice(api, world.vuser, world.mine.id).status_code == 201
+    assert _invoice(api, world.vuser, world.mine.id).status_code == 201   # corrected invoice
+
+
+def test_invoice_refused_before_work_is_completed(api, db_session, world):
+    for status in ("quote_requested", "approved", "in_progress"):
+        _set_status(db_session, world.mine, status)
+        r = _invoice(api, world.vuser, world.mine.id)
+        assert r.status_code == 400
+        assert "completed" in r.text
+
+
+def test_invoice_must_be_real_pdf(api, db_session, world):
+    _set_status(db_session, world.mine, "completed")
+    assert _invoice(api, world.vuser, world.mine.id, content=b"not a pdf").status_code == 400
+
+
+def test_invoice_over_10mb_rejected(api, db_session, world):
+    _set_status(db_session, world.mine, "completed")
+    big = b"%PDF-" + b"x" * (10 * 1024 * 1024 + 1)
+    r = _invoice(api, world.vuser, world.mine.id, content=big)
+    assert r.status_code == 400
+    assert "File too large (max 10MB)" in r.text
+
+
+def test_invoice_counts_toward_20mb_ticket_total(api, db_session, world):
+    _set_status(db_session, world.mine, "completed")
+    nine_mb = b"%PDF-" + b"x" * (9 * 1024 * 1024)
+    assert _invoice(api, world.vuser, world.mine.id, content=nine_mb).status_code == 201
+    assert _invoice(api, world.vuser, world.mine.id, content=nine_mb).status_code == 201   # 18 MB
+    r = _invoice(api, world.vuser, world.mine.id, content=nine_mb)                          # 27 MB
+    assert r.status_code == 400
+    assert "20MB" in r.text
+
+
+def test_invoice_on_other_vendors_job_is_404(api, db_session, world):
+    _set_status(db_session, world.theirs, "completed")
+    assert _invoice(api, world.vuser, world.theirs.id).status_code == 404
+
+
+def test_job_detail_lists_own_invoices_and_flag(api, db_session, world):
+    detail = api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.vuser)).json()
+    assert detail["can_submit_invoice"] is False and detail["invoices"] == []
+
+    _set_status(db_session, world.mine, "completed")
+    assert _invoice(api, world.vuser, world.mine.id).status_code == 201
+    detail = api.get(f"/vendor/jobs/{world.mine.id}", headers=_hdr(world.vuser)).json()
+    assert detail["can_submit_invoice"] is True
+    assert len(detail["invoices"]) == 1

@@ -42,13 +42,14 @@ from schemas import (
     MaintenanceTicketUpdate,
     TicketCreate,
     TicketTransitionRequest,
+    TicketRatingRequest,
     TicketCommentCreate,
     OwnerApprovalDecision,
     VendorCreate,
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, maybe_notify_ticket_closed, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
 from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
 from services.vendor_service import get_vendor_for_user
@@ -1968,6 +1969,9 @@ def create_ticket_comment(
         visible_to=data.visible_to,
     )
     db.add(comment)
+    # A new message is ticket activity: bump updated_at so the ticket moves
+    # to the top of lists sorted by "last update".
+    ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(comment)
     return serialize_ticket_comment(comment)
@@ -2169,7 +2173,10 @@ async def update_maintenance_ticket(
         await maybe_notify_quote_submitted(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
-    return serialize_ticket(ticket)
+    try:
+        await maybe_notify_ticket_closed(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
 
 
 # ---- Maintenance tickets, Day 14 additions ----
@@ -2335,13 +2342,24 @@ async def transition_ticket_endpoint(
         db, user.username, ticket.property_id
     ):
         raise HTTPException(403, "Not authorized for this ticket")
+    if data.new_status == "closed" and ticket.assigned_vendor_id:
+        has_invoice = (
+            db.query(TicketAttachment)
+            .filter(
+                TicketAttachment.ticket_id == ticket.id,
+                TicketAttachment.type == "invoice",
+            )
+            .first()
+        )
+        if not has_invoice:
+            raise HTTPException(400, "Can't close yet: the vendor hasn't uploaded an invoice.")
     old_status = ticket.status
     transition_ticket(db, ticket, data.new_status, user, data.note)
     recompute_vendor_stats(db, ticket.assigned_vendor_id)
     db.commit()
     db.refresh(ticket)
     try:
-        await maybe_notify_quote_submitted(ticket, db, old_status)
+        await maybe_notify_ticket_closed(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
     data_out = serialize_ticket(ticket)
@@ -3076,7 +3094,7 @@ def get_ticket_attachments(
         .order_by(TicketAttachment.uploaded_at.asc())
         .all()
     )
-    return group_attachments(attachments, user.role)
+    return group_attachments(attachments, user.role, ticket.status)
 
 @app.delete("/tickets/{ticket_id}/attachments/{attachment_id}")
 def delete_ticket_attachment(
@@ -3445,12 +3463,13 @@ def _vendor_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code, detail={"code": code, "message": message})
 
 
-def _resolve_vendor_access(token: str, db: Session):
+def _resolve_vendor_access(token: str, db: Session, allow_completed: bool = False):
     """Validate a vendor token and return (access, ticket, vendor).
 
     404 invalid  - unknown token
     410 job_completed / job_closed - ticket is finished (checked before expiry)
     410 expired  - past 7-day TTL, or revoked
+
     """
     access = db.query(VendorTicketAccess).filter(
         VendorTicketAccess.token == token
@@ -3465,7 +3484,7 @@ def _resolve_vendor_access(token: str, db: Session):
     if not ticket or not vendor:
         raise _vendor_error(404, "invalid", "This link is not valid. Contact your property manager.")
 
-    if ticket.status in VENDOR_DONE_STATUSES:
+    if ticket.status in VENDOR_DONE_STATUSES and not (allow_completed and ticket.status == "completed"):
         raise _vendor_error(410, "job_completed", "This job is already completed.")
     if ticket.status == "rejected":
         raise _vendor_error(410, "job_closed", "This job is no longer active. Contact your property manager.")
@@ -3624,6 +3643,58 @@ async def _store_vendor_quote(
         "attachment": serialize_attachment(attachment),
     }
 
+INVOICE_ALLOWED_STATUSES = ("completed",)
+
+
+async def _store_vendor_invoice(
+    db: Session,
+    ticket: MaintenanceTicket,
+    vendor: Vendor,
+    file: UploadFile,
+):
+    """Validate + persist a vendor's PDF invoice. Does not change ticket status.
+    Shared by the emailed-token portal and the logged-in vendor dashboard."""
+    if ticket.status not in INVOICE_ALLOWED_STATUSES:
+        raise HTTPException(400, "Invoices can be uploaded once the work is completed")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "The file is empty")
+    if len(data) > MAX_QUOTE_PDF_SIZE:
+        raise HTTPException(400, "File too large (max 10MB)")
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(400, "Please upload your invoice as a PDF")
+
+    check_ticket_total(db, ticket.id, len(data))      # max 20MB per ticket
+
+    upload_dir = os.path.join("uploads", "tickets", ticket.id)
+    os.makedirs(upload_dir, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}.pdf"
+    filepath = os.path.join(upload_dir, stored_name)
+    with open(filepath, "wb") as out:
+        out.write(data)
+
+    try:
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            url=f"{BACKEND_URL}/uploads/tickets/{ticket.id}/{stored_name}",
+            filename=os.path.basename(file.filename or "invoice.pdf"),
+            type="invoice",
+            uploaded_by=f"vendor:{vendor.name}",
+            uploaded_by_role="vendor",
+            size_kb=max(1, round(len(data) / 1024)),
+        )
+        db.add(attachment)
+        db.commit()
+        db.refresh(attachment)
+    except Exception:
+        db.rollback()
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise
+
+    return serialize_attachment(attachment)
+
 
 # ---------------------------------------------------------------------------
 # Vendor dashboard (logged-in vendor account): job list, job detail, quote
@@ -3740,7 +3811,7 @@ def get_vendor_job(
 
     attachments = (
         db.query(TicketAttachment)
-        .filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.type.in_(("photo", "quote")))
+        .filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.type.in_(("photo", "quote", "invoice")))
         .order_by(TicketAttachment.uploaded_at.asc())
         .all()
     )
@@ -3750,7 +3821,11 @@ def get_vendor_job(
         a for a in attachments
         if a.type == "quote" and a.uploaded_by == f"vendor:{vendor.name}"
     ]
-
+    # Only invoices this vendor uploaded themselves.
+    invoices = [
+        a for a in attachments
+        if a.type == "invoice" and a.uploaded_by == f"vendor:{vendor.name}"
+    ]
     pms = get_ticket_pm_users(ticket, db)
     pm = pms[0] if pms else None
     prop = ticket.property
@@ -3767,6 +3842,12 @@ def get_vendor_job(
             "name": (pm.full_name or pm.username) if pm else None,
             "phone": pm.phone if pm else None,
         },
+        "invoices": [
+            {"id": a.id, "url": a.url, "filename": a.filename,
+             "uploaded_at": a.uploaded_at, "size_kb": a.size_kb or 0}
+            for a in invoices
+        ],
+        "can_submit_invoice": ticket.status in INVOICE_ALLOWED_STATUSES,
         # Status + time only: history notes and actors can hold internal PM text.
         "timeline": [
             {"status": h.to_status, "at": h.created_at}
@@ -3800,3 +3881,57 @@ async def vendor_upload_quote(
     ticket.quote_amount, ticket -> quote_received, PM notified."""
     access, ticket, vendor = _resolve_vendor_access(token, db)
     return await _store_vendor_quote(db, ticket, vendor, file, quote_amount)
+
+@app.post("/vendor/jobs/{ticket_id}/invoice", status_code=201)
+async def vendor_job_upload_invoice(
+    ticket_id: str,
+    file: UploadFile = File(...),
+    vendor: Vendor = Depends(current_vendor),
+    db: Session = Depends(get_db),
+):
+    """Logged-in vendor uploads a PDF invoice for their own job."""
+    ticket = _vendor_ticket_or_404(db, vendor, ticket_id)
+    return await _store_vendor_invoice(db, ticket, vendor, file)
+
+
+
+
+
+@app.post("/vendor-access/{token}/invoice", status_code=201)
+async def vendor_upload_invoice(
+    token: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Vendor uploads a PDF invoice via the emailed link (no login).
+    Works while the job is Completed; closed jobs are refused."""
+    access, ticket, vendor = _resolve_vendor_access(token, db, allow_completed=True)
+    return await _store_vendor_invoice(db, ticket, vendor, file)
+
+
+@app.post("/tickets/{ticket_id}/rating")
+def rate_ticket_endpoint(
+    ticket_id: str,
+    data: TicketRatingRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Tenant rates a closed ticket once; feeds the vendor's avg_rating."""
+    ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    if ticket.company_id != user.company_id:
+        raise HTTPException(403, "Not authorized")
+    if user.role != ROLE_TENANT or ticket.created_by != user.username:
+        raise HTTPException(403, "Only the tenant who raised this ticket can rate it")
+    if ticket.status != "closed":
+        raise HTTPException(400, "Only closed tickets can be rated")
+    if ticket.rating is not None:
+        raise HTTPException(409, "This ticket has already been rated")
+    if not 1 <= data.rating <= 5:
+        raise HTTPException(400, "Rating must be between 1 and 5")
+    ticket.rating = data.rating
+    recompute_vendor_stats(db, ticket.assigned_vendor_id)
+    db.commit()
+    db.refresh(ticket)
+    return serialize_ticket(ticket)
