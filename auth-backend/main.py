@@ -654,8 +654,37 @@ def get_portal_info(slug: str, db: Session = Depends(get_db)):
 
 @app.get("/companies")
 def get_companies(
-    db: Session = Depends(get_db)
+    scope: str = "options",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
+    """scope=options (default): companies that have an active Company Admin,
+    used by the Create User dropdown (any logged-in role).
+
+    scope=all: Super Admin only. EVERY company, including ones with zero
+    users, each with `user_count` (all roles, all statuses)."""
+    if scope == "all":
+        if user.role != ROLE_SUPER_ADMIN:
+            raise HTTPException(403, "Not authorized")
+
+        rows = (
+            db.query(Company, func.count(User.id).label("user_count"))
+            .outerjoin(User, User.company_id == Company.id)
+            .group_by(Company.id)
+            .order_by(func.lower(Company.name))
+            .all()
+        )
+        return [
+            {
+                "id":           c.id,
+                "name":         c.name,
+                "company_code": c.company_code,
+                "slug":         c.slug,
+                "user_count":   n,
+            }
+            for c, n in rows
+        ]
+
     company_admins = db.query(User).filter(
         User.role == "Company Admin",
         User.status.ilike("active"),

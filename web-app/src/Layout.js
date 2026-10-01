@@ -15,6 +15,7 @@ function Layout() {
 
   const NAV = [
     { icon: "⊞", label: "Dashboard",       path: "/dashboard"    },
+    { icon: "▦", label: "Companies",       path: "/companies/manage" },
     { icon: "◈", label: "User Management", path: "/users/manage" },
   ];
 
