@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import TicketComments from "./TicketComments";
-import AttachmentList from "./AttachmentList";
+import AttachmentTabs from "./AttachmentTabs";
 
 const API = "http://localhost:8000";
 
@@ -45,6 +45,7 @@ const TICKET_ACTIONS = {
   open: [{ to: "pm_review", label: "Start Review" }],
   // pm_review -> quote_requested happens via "Assign Vendor" below (needs a vendor + emails them).
   quote_received: [{ to: "pending_owner_approval", label: "Submit to Owner for Approval" }],
+  rejected: [{ to: "quote_requested", label: "Request Revised Quote" }],
   approved: [{ to: "in_progress", label: "Begin Work" }],
   in_progress: [{ to: "completed", label: "Mark Completed" }],
   completed: [{ to: "closed", label: "Close Ticket" }],
@@ -187,7 +188,8 @@ function PMTicketDetail() {
   const [deleteSuccess, setDeleteSuccess] = useState("");
   const [prioritySaving, setPrioritySaving] = useState(false);
   const [priorityError, setPriorityError] = useState("");
-
+  const [attachmentsVersion, setAttachmentsVersion] = useState(0);
+  const [jumpTab, setJumpTab] = useState(null);
   const fetchTicket = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -342,7 +344,8 @@ function PMTicketDetail() {
         setUploadError(data.detail || "Could not upload document");
         return;
       }
-      setTicket(current => ({ ...current, attachments: [...(current.attachments || []), ...data] }));
+      setAttachmentsVersion(v => v + 1);
+      setJumpTab({ tab: "pm_notes", n: Date.now() });
     } catch {
       setUploadError("Server error. Please try again.");
     } finally {
@@ -364,10 +367,7 @@ function PMTicketDetail() {
         setDeleteError(data.detail || "Could not delete attachment");
         return;
       }
-      setTicket(current => ({
-        ...current,
-        attachments: (current.attachments || []).filter(item => item.id !== attachment.id),
-      }));
+      setAttachmentsVersion(v => v + 1);
       setDeleteSuccess("Attachment deleted.");
       setAttachmentToDelete(null);
     } catch {
@@ -498,10 +498,12 @@ function PMTicketDetail() {
           {uploadError && <p style={s.errorText}>{uploadError}</p>}
           {deleteError && <p style={s.errorText}>{deleteError}</p>}
           {deleteSuccess && <p style={s.savedHint}>{deleteSuccess}</p>}
-          <AttachmentList
-            attachments={ticket.attachments}
-            onRequestDelete={a => { setDeleteError(""); setDeleteSuccess(""); setAttachmentToDelete(a); }}
-          />
+          <AttachmentTabs
+     ticketId={ticket.id}
+     refreshKey={attachmentsVersion}
+     jumpTo={jumpTab}
+     onRequestDelete={a => { setDeleteError(""); setDeleteSuccess(""); setAttachmentToDelete(a); }}
+   />
         </div>
 
         <div style={s.section}>

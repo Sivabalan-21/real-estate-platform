@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import TicketComments from "./TicketComments";
+import OwnerQuotes from "./OwnerQuotes";
 
 const API = "http://localhost:8000";
 
@@ -195,14 +196,9 @@ function OwnerApprovals() {
                   <span style={s.metaItem}><strong>PM:</strong> {a.pm_name || a.pm_username || "Unassigned"}</span>
                   <span style={s.metaItem}><strong>Submitted:</strong> {formatDate(a.submitted_at)}</span>
                   <span style={s.metaItem}><strong>Quote:</strong> {formatQuote(a.quote_amount)}</span>
-                  {a.quote_attachment_url && (
-                    <a style={s.quoteLink} href={a.quote_attachment_url} target="_blank" rel="noreferrer">
-                      View quote PDF
-                    </a>
-                  )}
                 </div>
 
-                <TicketComments ticketId={a.ticket_id} role="Owner" styles={s} />
+                <OwnerQuotes ticketId={a.ticket_id} />
 
                 <div style={s.actionRow}>
                   <button

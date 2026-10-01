@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import Base, SessionLocal, engine
 from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory, VendorTicketAccess
+from attachment_helpers import (
+    check_file_size, check_ticket_total, to_kb, next_quote_version,
+    group_attachments, role_key,
+)
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
 from schemas import (
     CreateUserRequest,
@@ -44,7 +48,7 @@ from schemas import (
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, _get_pm_users as get_ticket_pm_users
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
 from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
 from services.vendor_service import get_vendor_for_user
@@ -2297,13 +2301,44 @@ def get_pm_tickets(
     if status:
         query = query.filter(MaintenanceTicket.status == status)
     else:
-        query = query.filter(MaintenanceTicket.status.in_(ACTIVE_TICKET_STATUSES))
+        # "rejected" is included: a PM can send it back for a revised quote
+        pm_default_statuses = set(ACTIVE_TICKET_STATUSES) | {"rejected"}
+        query = query.filter(MaintenanceTicket.status.in_(pm_default_statuses))
 
     sort_column = MaintenanceTicket.updated_at if sort == "updated_at" else MaintenanceTicket.created_at
     query = query.order_by(sort_column.desc())
 
     return [serialize_ticket(t) for t in query.all()]
+@app.get("/pm/tickets/needs-attention")
+def get_pm_tickets_needing_attention(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Count of tickets waiting on the PM: owner-rejected, quote received, new."""
+    if user.role != ROLE_PROPERTY_MANAGER:
+        raise HTTPException(403, "Not authorized")
 
+    assigned_property_ids = _pm_assigned_property_ids(db, user.username)
+    if not assigned_property_ids:
+        return {"count": 0, "rejected": 0, "quote_received": 0, "open": 0}
+
+    rows = (
+        db.query(MaintenanceTicket.status, func.count(MaintenanceTicket.id))
+        .filter(
+            MaintenanceTicket.company_id == user.company_id,
+            MaintenanceTicket.property_id.in_(assigned_property_ids),
+            MaintenanceTicket.status.in_(("rejected", "quote_received", "open", "pm_review")),
+        )
+        .group_by(MaintenanceTicket.status)
+        .all()
+    )
+    counts = {status: n for status, n in rows}
+    return {
+        "count": sum(counts.values()),
+        "rejected": counts.get("rejected", 0),
+        "quote_received": counts.get("quote_received", 0),
+        "open": counts.get("open", 0),
+    }
 
 @app.get("/pm/tickets/{ticket_id}")
 def get_pm_ticket_detail(
@@ -2769,6 +2804,9 @@ def serialize_attachment(attachment: TicketAttachment):
         "filename": attachment.filename,
         "type": attachment.type,
         "uploaded_by": attachment.uploaded_by,
+        "uploaded_by_role": attachment.uploaded_by_role,
+        "size_kb": attachment.size_kb or 0,
+        "version": attachment.version,
         "uploaded_at": attachment.uploaded_at,
     }
 
@@ -2787,14 +2825,15 @@ async def upload_ticket_attachments(
     if ticket.company_id != user.company_id:
         raise HTTPException(403, "Not authorized")
 
-    if attachment_type not in ("photo", "pm_note"):
+    if attachment_type not in ("photo", "pm_note", "quote", "invoice"):
         raise HTTPException(400, "Unsupported attachment type")
 
-    # Tenant can only attach photos to their own ticket. PMs may attach
-    # internal documents; the existing tenant photo contract remains intact.
+    # Tenant can only attach photos to their own ticket. Owners cannot upload.
     if user.role == ROLE_TENANT and ticket.created_by != user.username:
         raise HTTPException(403, "Not authorized")
     if user.role == ROLE_TENANT and attachment_type != "photo":
+        raise HTTPException(403, "Not authorized")
+    if role_key(user.role) == "owner":
         raise HTTPException(403, "Not authorized")
     if user.role == ROLE_PROPERTY_MANAGER and ticket.property_id not in _pm_assigned_property_ids(db, user.username):
         raise HTTPException(403, "Not authorized for this ticket")
@@ -2802,25 +2841,35 @@ async def upload_ticket_attachments(
     if len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
         raise HTTPException(400, f"Max {MAX_TICKET_PHOTOS_PER_UPLOAD} files per upload")
 
-    existing_count = db.query(TicketAttachment).filter(
-    TicketAttachment.ticket_id == ticket_id,
-    TicketAttachment.type == attachment_type,
-    ).count()
-    if existing_count + len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
-        raise HTTPException(400, f"This ticket already has {existing_count} attachment(s); max {MAX_TICKET_PHOTOS_PER_UPLOAD} total")
+    # Count cap applies to photos / PM documents only. Quotes and invoices are
+    # limited by size instead, so re-quotes can keep adding versions.
+    if attachment_type in ("photo", "pm_note"):
+        existing_count = db.query(TicketAttachment).filter(
+            TicketAttachment.ticket_id == ticket_id,
+            TicketAttachment.type == attachment_type,
+        ).count()
+        if existing_count + len(files) > MAX_TICKET_PHOTOS_PER_UPLOAD:
+            raise HTTPException(400, f"This ticket already has {existing_count} attachment(s); max {MAX_TICKET_PHOTOS_PER_UPLOAD} total")
 
+    allowed_types = (
+        ALLOWED_PM_ATTACHMENT_TYPES
+        if attachment_type in ("pm_note", "quote", "invoice")
+        else ALLOWED_PHOTO_TYPES
+    )
     contents_by_file = []
     for f in files:
-        allowed_types = ALLOWED_PM_ATTACHMENT_TYPES if attachment_type in ("pm_note", "quote") else ALLOWED_PHOTO_TYPES
         if f.content_type not in allowed_types:
             raise HTTPException(400, f"'{f.filename}' is not a supported attachment type")
         data = await f.read()
-        if len(data) > MAX_PHOTO_SIZE:
-            raise HTTPException(400, "File too large")
+        check_file_size(data)                       # 10MB per file
         contents_by_file.append(data)
+
+    check_ticket_total(db, ticket_id, sum(len(d) for d in contents_by_file))  # 20MB per ticket
 
     upload_dir = os.path.join("uploads", "tickets", ticket_id)
     os.makedirs(upload_dir, exist_ok=True)
+
+    next_version = next_quote_version(db, ticket_id) if attachment_type == "quote" else None
 
     saved = []
     for f, data in zip(files, contents_by_file):
@@ -2836,7 +2885,12 @@ async def upload_ticket_attachments(
             filename=f.filename,
             type=attachment_type,
             uploaded_by=user.username,
+            uploaded_by_role=role_key(user.role),
+            size_kb=to_kb(len(data)),
+            version=next_version,
         )
+        if next_version is not None:
+            next_version += 1
         db.add(attachment)
         saved.append(attachment)
 
@@ -2865,8 +2919,7 @@ def get_ticket_attachments(
         .order_by(TicketAttachment.uploaded_at.asc())
         .all()
     )
-    return [serialize_attachment(a) for a in attachments]
-
+    return group_attachments(attachments, user.role)
 
 @app.delete("/tickets/{ticket_id}/attachments/{attachment_id}")
 def delete_ticket_attachment(
@@ -3197,7 +3250,7 @@ def approve_ticket(
 
 
 @app.post("/tickets/{ticket_id}/reject")
-def reject_ticket(
+async def reject_ticket(
     ticket_id: str,
     data: OwnerApprovalDecision,
     db: Session = Depends(get_db),
@@ -3214,10 +3267,13 @@ def reject_ticket(
     db.commit()
     db.refresh(ticket)
 
+    await notify_quote_rejected_pm(
+        ticket, db, user.full_name or user.username, comment_body
+    )
+
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
-
 
 
 # ---------------------------------------------------------------------------
@@ -3324,54 +3380,84 @@ async def _store_vendor_quote(
 ):
     """Validate + persist a vendor's PDF quote and move the ticket to
     quote_received. Shared by the emailed-token portal and the logged-in
-    vendor dashboard so both enforce identical rules."""
+    vendor dashboard.
+    """
+
     if ticket.status != "quote_requested":
         raise HTTPException(400, "A quote has already been submitted for this job")
 
     amount = _parse_quote_amount(quote_amount)
 
     data = await file.read()
+
     if not data:
         raise HTTPException(400, "The file is empty")
+
+    # Maximum individual file size
     if len(data) > MAX_QUOTE_PDF_SIZE:
         raise HTTPException(400, "File too large (max 10MB)")
-    # Phones often send PDFs as application/octet-stream, so trust the
-    # content itself rather than the declared MIME type.
+
+    # Validate PDF content
     if not data.startswith(b"%PDF-"):
         raise HTTPException(400, "Please upload your quote as a PDF")
+    check_ticket_total(db, ticket.id, len(data))
 
+    # Store file
     upload_dir = os.path.join("uploads", "tickets", ticket.id)
     os.makedirs(upload_dir, exist_ok=True)
+
     stored_name = f"{uuid.uuid4().hex}.pdf"
     filepath = os.path.join(upload_dir, stored_name)
+
     with open(filepath, "wb") as out:
         out.write(data)
 
     try:
+        # Calculate size in KB
+        size_kb = max(1, round(len(data) / 1024))
+
+        # Generate quote version
+        next_version = next_quote_version(db, ticket.id)
+
         attachment = TicketAttachment(
             ticket_id=ticket.id,
             url=f"{BACKEND_URL}/uploads/tickets/{ticket.id}/{stored_name}",
             filename=os.path.basename(file.filename or "quote.pdf"),
             type="quote",
             uploaded_by=f"vendor:{vendor.name}",
+            uploaded_by_role="vendor",
+            size_kb=size_kb,
+            version=next_version,
         )
+
         db.add(attachment)
+
         if amount is not None:
             ticket.quote_amount = amount
+
         vendor_transition_ticket(
-            db, ticket, "quote_received", vendor.name,
-            f"Quote uploaded by {vendor.name}" + (f" ({amount:,.2f})" if amount is not None else ""),
+            db,
+            ticket,
+            "quote_received",
+            vendor.name,
+            f"Quote uploaded by {vendor.name}"
+            + (f" ({amount:,.2f})" if amount is not None else ""),
         )
+
         db.commit()
+
     except Exception:
         db.rollback()
+
         if os.path.exists(filepath):
             os.remove(filepath)
+
         raise
+
     db.refresh(ticket)
     db.refresh(attachment)
 
-    # After commit: a mail failure must never undo the upload.
+    # Email failure should never undo the successful upload
     await notify_quote_received_pm(ticket, db, vendor.name)
 
     return {

@@ -144,7 +144,11 @@ def test_default_pm_ticket_list_contains_active_tickets_only(
 
     assert res.status_code == 200
     returned_ids = {ticket["id"] for ticket in res.json()}
-    assert returned_ids == {ticket.id for ticket in active_titles.values()}
+    # Rejected tickets stay visible to the PM: they can be sent back to the
+    # vendor with "Request Revised Quote". Only closed is hidden by default.
+    expected_ids = {ticket.id for ticket in active_titles.values()} | {rejected.id}
+    assert returned_ids == expected_ids
+    assert closed.id not in returned_ids
     assert closed.id not in returned_ids
     assert rejected.id not in returned_ids
     assert db_session.get(MaintenanceTicket, closed.id) is not None
@@ -406,13 +410,13 @@ def test_pm_attachment_under_limit_uploads_and_10mb_is_rejected(
         f"/tickets/{ticket.id}/attachments",
         files=[(
             "files",
-            ("ten-megabytes.pdf", b"x" * (10 * 1024 * 1024), "application/pdf"),
+            ("twelve-megabytes.pdf", b"x" * (12 * 1024 * 1024), "application/pdf"),
         )],
         data={"attachment_type": "pm_note"},
     )
 
     assert oversized_upload.status_code == 400
-    assert oversized_upload.json()["detail"] == "File too large"
+    assert oversized_upload.json()["detail"] == "File too large (max 10MB)"
 
 
 def test_authorized_pm_can_delete_ticket_attachment_and_file(
@@ -538,4 +542,68 @@ def test_invalid_status_filter_rejected(db_session, company_a, client_factory):
 
 def test_non_pm_role_forbidden(db_session, company_a, admin_user, client_factory):
     res = client_factory(admin_user).get("/pm/tickets")
+    assert res.status_code == 403
+
+
+def _pm_ticket(db_session, company_a, client_factory, username):
+    pm = make_pm(db_session, company_a, username)
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+    ticket = make_ticket(db_session, company_a, prop, unit, "tenant1")
+    return ticket, client_factory(pm)
+
+
+def test_ticket_total_over_20mb_is_rejected(db_session, company_a, client_factory):
+    ticket, client = _pm_ticket(db_session, company_a, client_factory, "pm_total_limit")
+    nine_mb = b"x" * (9 * 1024 * 1024)
+    url = f"/tickets/{ticket.id}/attachments"
+
+    for name in ("a.pdf", "b.pdf"):          # 18 MB total, allowed
+        r = client.post(url, files=[("files", (name, nine_mb, "application/pdf"))],
+                        data={"attachment_type": "pm_note"})
+        assert r.status_code == 201
+
+    r = client.post(url, files=[("files", ("c.pdf", nine_mb, "application/pdf"))],
+                    data={"attachment_type": "pm_note"})   # would reach 27 MB
+    assert r.status_code == 400
+    assert "20MB" in r.json()["detail"]
+
+
+def test_attachments_are_grouped_by_type_and_quotes_are_versioned(db_session, company_a, client_factory):
+    ticket, client = _pm_ticket(db_session, company_a, client_factory, "pm_grouped")
+    url = f"/tickets/{ticket.id}/attachments"
+    pdf = ("files", ("q.pdf", b"%PDF-1.4 x", "application/pdf"))
+
+    for _ in range(2):
+        assert client.post(url, files=[pdf], data={"attachment_type": "quote"}).status_code == 201
+    assert client.post(url, files=[pdf], data={"attachment_type": "invoice"}).status_code == 201
+
+    body = client.get(url).json()
+    assert set(body) == {"photos", "quotes", "invoices", "pm_notes"}
+    assert [q["version"] for q in body["quotes"]] == [2, 1]      # newest first
+    assert len(body["invoices"]) == 1
+    for key in ("id", "url", "filename", "uploaded_by_role", "uploaded_at", "size_kb"):
+        assert key in body["quotes"][0]
+
+def test_needs_attention_counts_rejected_quote_received_and_open(
+    db_session, company_a, client_factory
+):
+    pm = make_pm(db_session, company_a, "pm_needs_attention")
+    prop = make_property(db_session, company_a)
+    unit = make_unit(db_session, prop)
+    assign_pm(db_session, prop, pm.username)
+
+    for status in ("rejected", "quote_received", "open", "open", "pm_review", "closed"):
+        make_ticket(db_session, company_a, prop, unit, "tenant1", status=status)
+
+    res = client_factory(pm).get("/pm/tickets/needs-attention")
+
+    assert res.status_code == 200
+    assert res.json() == {"count": 4, "rejected": 1, "quote_received": 1, "open": 2}
+
+
+def test_needs_attention_is_pm_only(db_session, company_a, client_factory):
+    tenant = make_tenant(db_session, company_a)
+    res = client_factory(tenant).get("/pm/tickets/needs-attention")
     assert res.status_code == 403

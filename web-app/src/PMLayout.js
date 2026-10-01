@@ -1,5 +1,16 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
+
+
+const API = "http://localhost:8000";
+const TICKETS_BADGE_POLL_MS = 30000;
+
+
+const badgeStyle = {
+  marginLeft: "auto", background: "#ef4444", color: "#fff",
+  fontSize: 11, fontWeight: 700, borderRadius: 10, padding: "1px 7px",
+  minWidth: 18, textAlign: "center",
+};
 
 // Where each role's own dashboard lives — used to bounce a mismatched role
 // away from the PM shell instead of rendering it for the wrong user.
@@ -19,6 +30,32 @@ function PMLayout() {
   const displayName = localStorage.getItem("display_name") || username;
   const role = localStorage.getItem("role");
 
+    const [needsAttention, setNeedsAttention] = useState(0);
+
+  // Red count on "Tickets": rejected, quote received, or newly opened tickets.
+  // Polled every 30s and re-fetched on navigation so it clears after the PM acts.
+  useEffect(() => {
+    if (role !== "Property Manager") return;
+    const token = localStorage.getItem("token");
+    let cancelled = false;
+
+    const fetchCount = async () => {
+      try {
+        const res = await fetch(`${API}/pm/tickets/needs-attention`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setNeedsAttention(data.count || 0);
+      } catch {
+        // silent: a missing badge isn't worth an error
+      }
+    };
+
+    fetchCount();
+    const id = window.setInterval(fetchCount, TICKETS_BADGE_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [role, location.pathname]);
   // Guard: only a Property Manager should ever see this shell.
   useEffect(() => {
     if (role && role !== "Property Manager") {
@@ -54,8 +91,9 @@ function PMLayout() {
         </div>
 
         <nav style={s.nav}>
-          {NAV.map(n => {
+                    {NAV.map(n => {
             const active = location.pathname === n.path || location.pathname.startsWith(n.path + "/");
+            const showBadge = n.path === "/pm/tickets" && needsAttention > 0;
             return (
               <div
                 key={n.path}
@@ -64,6 +102,9 @@ function PMLayout() {
               >
                 <span style={s.navIcon}>{n.icon}</span>
                 <span>{n.label}</span>
+                {showBadge && (
+                  <span style={badgeStyle}>{needsAttention > 99 ? "99+" : needsAttention}</span>
+                )}
               </div>
             );
           })}

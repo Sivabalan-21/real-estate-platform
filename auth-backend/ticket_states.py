@@ -59,6 +59,7 @@ _PM_TRANSITIONS = {
     "pm_review": {"quote_requested"},
     "quote_requested": {"quote_received"},
     "quote_received": {"pending_owner_approval"},
+    "rejected": {"quote_requested"},          # PM asks the vendor for a revised quote
     "approved": {"in_progress"},
     "in_progress": {"completed"},
     "completed": {"closed"},

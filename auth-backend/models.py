@@ -416,8 +416,11 @@ class TicketAttachment(Base):
 
     url = Column(String, nullable=False)
     filename = Column(String, nullable=False)
-    type = Column(String, nullable=False)  # photo / quote / invoice
+    type = Column(String, nullable=False)  # photo / quote / invoice / pm_note
     uploaded_by = Column(String, nullable=True)
+    uploaded_by_role = Column(String, nullable=True)
+    size_kb = Column(Integer, nullable=False, default=0)
+    version = Column(Integer, nullable=True)  # quote version: 1, 2, 3...
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     ticket = relationship("MaintenanceTicket", back_populates="attachments")

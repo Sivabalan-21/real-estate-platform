@@ -197,3 +197,23 @@ Property Portal Team
     except Exception as exc:
         print(f"[notify] notify_quote_received_pm error: {exc}")
         traceback.print_exc()
+
+async def notify_quote_rejected_pm(ticket, db, owner_name: str, reason: str):
+    """Tell the assigned PM(s) the owner rejected the quote, with the reason."""
+    try:
+        for pm in _get_pm_users(ticket, db):
+            if not getattr(pm, "email", None):
+                continue
+            await _send(
+                pm.email,
+                f"Owner rejected the quote: {_place(ticket)}",
+                (
+                    f"Hi {_display_name(pm)},\n\n"
+                    f"{owner_name} rejected the quote for {_place(ticket)}.\n\n"
+                    f"Reason: {reason}\n\n"
+                    f"You can request a revised quote from the vendor here:\n"
+                    f"{_frontend_url()}/pm/tickets/{ticket.id}\n"
+                ),
+            )
+    except Exception as exc:       # never let an email problem break the reject action
+        print(f"[notify] rejection email failed for ticket {ticket.id}: {exc}")
