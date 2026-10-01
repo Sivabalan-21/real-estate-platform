@@ -144,13 +144,11 @@ def test_default_pm_ticket_list_contains_active_tickets_only(
 
     assert res.status_code == 200
     returned_ids = {ticket["id"] for ticket in res.json()}
-    # Rejected tickets stay visible to the PM: they can be sent back to the
-    # vendor with "Request Revised Quote". Only closed is hidden by default.
+    # Rejected tickets stay visible: the PM can send them back with
+    # "Request Revised Quote". Only closed tickets are hidden by default.
     expected_ids = {ticket.id for ticket in active_titles.values()} | {rejected.id}
     assert returned_ids == expected_ids
     assert closed.id not in returned_ids
-    assert closed.id not in returned_ids
-    assert rejected.id not in returned_ids
     assert db_session.get(MaintenanceTicket, closed.id) is not None
     assert db_session.get(MaintenanceTicket, rejected.id) is not None
 
@@ -593,17 +591,22 @@ def test_needs_attention_counts_rejected_quote_received_and_open(
     prop = make_property(db_session, company_a)
     unit = make_unit(db_session, prop)
     assign_pm(db_session, prop, pm.username)
+    client = client_factory(pm)
+
+    before = client.get("/pm/tickets/needs-attention").json()
 
     for status in ("rejected", "quote_received", "open", "open", "pm_review", "closed"):
         make_ticket(db_session, company_a, prop, unit, "tenant1", status=status)
 
-    res = client_factory(pm).get("/pm/tickets/needs-attention")
+    after = client.get("/pm/tickets/needs-attention").json()
 
-    assert res.status_code == 200
-    assert res.json() == {"count": 4, "rejected": 1, "quote_received": 1, "open": 2}
+    assert after["rejected"] - before["rejected"] == 1
+    assert after["quote_received"] - before["quote_received"] == 1
+    assert after["open"] - before["open"] == 2
+    assert after["count"] - before["count"] == 4   # pm_review and closed are not counted
 
 
 def test_needs_attention_is_pm_only(db_session, company_a, client_factory):
-    tenant = make_tenant(db_session, company_a)
+    tenant = make_tenant(db_session, company_a, "tenant_no_access")
     res = client_factory(tenant).get("/pm/tickets/needs-attention")
     assert res.status_code == 403

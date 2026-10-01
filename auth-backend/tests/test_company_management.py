@@ -45,7 +45,7 @@ def test_scope_all_returns_every_company_with_counts(client_factory, seeded):
     data = res.json()
     assert len(data) == 9
     assert {c["name"]: c["user_count"] for c in data} == {n: k for n, _, _, k in SEED}
-    assert set(data[0]) == {"id", "name", "company_code", "slug", "user_count"}
+    assert set(data[0]) == {"id", "name", "company_code", "slug", "user_count", "created_at"}
     # Super Admin (no company) is not counted anywhere.
     assert sum(c["user_count"] for c in data) == 10
 

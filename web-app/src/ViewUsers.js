@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { apiGet, endSession, initials, useDebounced } from "./superAdminShared";
 
 // ─── ROLE CONFIG ────────────────────────────────────────────────────────────
 import { ROLE_OPTIONS_BY_CURRENT_ROLE, ROLE_META } from "./roleConfig";
@@ -25,6 +26,14 @@ const roleRank = (role) => {
 };
 const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 const userDisplayName = (u) => u.full_name || u.username || u.email || "";
+
+// Statuses that really exist in the backend (rbac.USER_STATUSES).
+const STATUS_OPTIONS = [
+  { value: "active",    label: "Active"    },
+  { value: "invited",   label: "Invited"   },
+  { value: "suspended", label: "Suspended" },
+];
+const PAGE_SIZE = 10;
 
 // ─── MODAL ───────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
@@ -86,6 +95,25 @@ function ViewUsers() {
   const [filterRole, setFilterRole] = useState("All");
   const [toast,      setToast]      = useState(null);
 
+  // Super Admin: server-side search / filters / pagination, company-scoped mode
+  const isSA = currentRole === "Super Admin";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const companyIdParam = isSA ? (searchParams.get("company_id") || "") : "";
+  const [filterCompany, setFilterCompany] = useState(companyIdParam);
+  const [filterStatus,  setFilterStatus]  = useState("");
+  const [pageNum,       setPageNum]       = useState(1);
+  const [total,         setTotal]         = useState(0);
+  const [pages,         setPages]         = useState(1);
+  const [allCompanies,  setAllCompanies]  = useState([]);
+  const [fetchError,    setFetchError]    = useState("");
+  const debouncedSearch = useDebounced(search, 300);
+  const reqId = useRef(0);
+
+  // Keep the company filter in sync with ?company_id= (links from Companies / Dashboard).
+  useEffect(() => { if (isSA) { setFilterCompany(companyIdParam); setPageNum(1); } }, [companyIdParam, isSA]);
+  // Any filter change goes back to page 1.
+  useEffect(() => { setPageNum(1); }, [debouncedSearch, filterRole, filterStatus, filterCompany]);
+
   // CREATE modal state
   const [showCreate,        setShowCreate]        = useState(false);
   const [createEmail,       setCreateEmail]       = useState("");
@@ -117,7 +145,29 @@ function ViewUsers() {
   };
 
   const fetchUsers = useCallback(async () => {
+    const myReq = ++reqId.current;
     try {
+      if (isSA) {
+        const res = await apiGet("/users", token, {
+          search: debouncedSearch.trim(),
+          company_id: filterCompany,
+          role: filterRole === "All" ? "" : filterRole,
+          status: filterStatus,
+          page: pageNum,
+          page_size: PAGE_SIZE,
+        });
+        if (myReq !== reqId.current) return;           // a newer request superseded this one
+        if (res.status === 401) { endSession(navigate); return; }
+        if (res.status === 403) { setFetchError("You are not authorized to view users."); return; }
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        setUsers(Array.isArray(data.items) ? data.items : []);
+        setTotal(data.total || 0);
+        setPages(data.pages || 1);
+        setFetchError("");
+        return;
+      }
+
       const res = await fetch("http://localhost:8000/users/my-hierarchy", {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -126,44 +176,73 @@ function ViewUsers() {
       const data = await res.json();
       setUsers(Array.isArray(data) ? data : []);
     } catch {
-      showToast("Failed to fetch users", "error");
+      if (isSA) setFetchError("Failed to load users.");
+      else showToast("Failed to fetch users", "error");
     } finally {
-      setLoading(false);
+      if (myReq === reqId.current) setLoading(false);
     }
-  }, [token, navigate]);
+  }, [token, navigate, isSA, debouncedSearch, filterCompany, filterRole, filterStatus, pageNum]);
 
+  // Companies for the create-modal dropdown (unchanged behaviour).
   useEffect(() => {
-    const handleStorageChange = (e) => {
-      if (e.key === "token" && !e.newValue) {}
-    };
-    window.addEventListener("storage", handleStorageChange);
-
-    fetchUsers();
-
-    let interval = null;
-    if (currentRole === "Super Admin") {
-      interval = setInterval(() => {
-        if (!document.hidden) fetchUsers();
-      }, 30000);
-    }
-
     fetch("http://localhost:8000/companies", {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setCompanies(data);
-        else setCompanies([]);
-      });
+      .then(data => setCompanies(Array.isArray(data) ? data : []))
+      .catch(() => setCompanies([]));
+  }, [token]);
 
-    return () => {
-      if (interval) clearInterval(interval);
-      window.removeEventListener("storage", handleStorageChange);
-    };
-  }, [fetchUsers, navigate, token, currentRole]);
+  // Super Admin: every company (incl. ones with no active admin) for the filter + header.
+  useEffect(() => {
+    if (!isSA) return;
+    apiGet("/companies", token, { scope: "all" })
+      .then(res => (res.ok ? res.json() : []))
+      .then(data => setAllCompanies(Array.isArray(data) ? data : []))
+      .catch(() => setAllCompanies([]));
+  }, [isSA, token, total]);
+
+  useEffect(() => {
+    fetchUsers();
+    let interval = null;
+    if (isSA) {
+      interval = setInterval(() => { if (!document.hidden) fetchUsers(); }, 30000);
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [fetchUsers, isSA]);
+
+  // /users/manage?invite=company-admin (from "+ Add Company") opens the invite modal.
+  useEffect(() => {
+    if (isSA && searchParams.get("invite") === "company-admin") {
+      setShowCreate(true);
+      setCreateRole("Company Admin");
+      const next = new URLSearchParams(searchParams);
+      next.delete("invite");
+      setSearchParams(next, { replace: true });
+    }
+  }, [isSA, searchParams, setSearchParams]);
+
+  const activeCompany = isSA && filterCompany
+    ? allCompanies.find(c => c.id === filterCompany) : null;
+
+  const clearFilters = () => {
+    setSearch(""); setFilterRole("All"); setFilterStatus("");
+    setFilterCompany("");
+    if (searchParams.get("company_id")) {
+      const next = new URLSearchParams(searchParams); next.delete("company_id");
+      setSearchParams(next);
+    }
+  };
+  const changeCompanyFilter = (id) => {
+    setFilterCompany(id);
+    const next = new URLSearchParams(searchParams);
+    if (id) next.set("company_id", id); else next.delete("company_id");
+    setSearchParams(next);
+  };
+  const hasFilters = !!(search || filterRole !== "All" || filterStatus || filterCompany);
 
   // ── filtered list ─────────────────────────────────────────────────────────
-  const filtered = users.filter(u => {
+  const filtered = isSA ? users : users.filter(u => {
     const matchSearch = !search ||
       u.email?.toLowerCase().includes(search.toLowerCase()) ||
       u.username?.toLowerCase().includes(search.toLowerCase()) ||
@@ -339,6 +418,165 @@ function ViewUsers() {
         </div>
       )}
 
+      {/* ───────── SUPER ADMIN VIEW ───────── */}
+      {isSA && (
+        <>
+          <div style={s.header}>
+            <div>
+              {activeCompany && (
+                <button style={s.backLink} onClick={clearFilters}>← Back to All Users</button>
+              )}
+              <h2 style={s.pageTitle}>
+                {filterCompany ? `User Management — ${activeCompany ? activeCompany.name : "Company"}` : "User Management"}
+              </h2>
+              <p style={s.pageSub}>
+                {filterCompany
+                  ? "Showing only users that belong to this company."
+                  : "View and manage all users in the system. Use filters to find specific users."}
+              </p>
+            </div>
+            <button
+              style={s.primaryBtn}
+              onClick={() => {
+                setShowCreate(true); setCreateErr(""); setCreateEmail("");
+                setSelectedCompanyId(filterCompany || "");
+                setCreateRole((ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [])[0] || "");
+              }}
+            >
+              + Add User
+            </button>
+          </div>
+
+          {activeCompany && (
+            <div style={s.companyBanner}>
+              <div style={s.bannerAvatar}>{initials(activeCompany.name)}</div>
+              <div style={s.bannerItem}><span style={s.bannerKey}>Company Code</span><span style={s.codeChip}>{activeCompany.company_code || "—"}</span></div>
+              <div style={s.bannerItem}><span style={s.bannerKey}>Slug</span><span style={s.bannerVal}>{activeCompany.slug || "—"}</span></div>
+              <div style={s.bannerItem}><span style={s.bannerKey}>Total Users</span><span style={s.bannerVal}>{activeCompany.user_count}</span></div>
+              <button style={{ ...s.clearBtn, marginLeft: "auto" }} onClick={() => navigate("/companies/manage")}>Back to Companies</button>
+            </div>
+          )}
+
+          <div style={s.saFilters}>
+            <div style={{ ...s.searchWrap, flex: "1 1 100%" }}>
+              <span style={s.searchIcon}>⌕</span>
+              <input
+                style={s.searchInput}
+                placeholder="Search by name, username, email, company, code, slug, role, status..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <div style={s.filterRow}>
+              <div style={s.filterField}>
+                <label style={s.filterLabel}>Company</label>
+                <select style={s.filterSelect} value={filterCompany} onChange={e => changeCompanyFilter(e.target.value)}>
+                  <option value="">All Companies</option>
+                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div style={s.filterField}>
+                <label style={s.filterLabel}>Role</label>
+                <select style={s.filterSelect} value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+                  <option value="All">All Roles</option>
+                  {SUPER_ADMIN_CREATE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div style={s.filterField}>
+                <label style={s.filterLabel}>Status</label>
+                <select style={s.filterSelect} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                  <option value="">All Statuses</option>
+                  {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <button style={s.clearBtn} onClick={clearFilters} disabled={!hasFilters}>Clear Filters</button>
+            </div>
+          </div>
+
+          <div style={{ ...s.tableWrap, overflowX: "auto" }}>
+            {loading ? (
+              <div style={s.empty}>Loading users...</div>
+            ) : fetchError ? (
+              <div style={{ ...s.empty, color: "#ef4444" }}>
+                {fetchError} <button style={s.linkBtn} onClick={fetchUsers}>Retry</button>
+              </div>
+            ) : users.length === 0 ? (
+              <div style={s.empty}>
+                {hasFilters ? "No users match your search or filters." : "No users found."}
+                {hasFilters && <> <button style={s.linkBtn} onClick={clearFilters}>Clear filters</button></>}
+              </div>
+            ) : (
+              <table style={{ ...s.table, minWidth: 880 }}>
+                <thead>
+                  <tr style={s.thead}>
+                    <th style={s.th}>#</th>
+                    <th style={s.th}>Name</th>
+                    <th style={s.th}>Username</th>
+                    <th style={s.th}>Email</th>
+                    <th style={s.th}>Company</th>
+                    <th style={s.th}>Role</th>
+                    <th style={s.th}>Status</th>
+                    <th style={{ ...s.th, textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u, i) => (
+                    <tr key={u.user_id || i} style={s.tr}>
+                      <td style={{ ...s.td, color: "#94a3b8" }}>{(pageNum - 1) * PAGE_SIZE + i + 1}</td>
+                      <td style={s.td}>
+                        <div style={s.userCell}>
+                          <div style={s.avatar}>{initials(u.full_name || u.username || u.email)}</div>
+                          <span style={s.userName}>{u.full_name || u.username || "—"}</span>
+                        </div>
+                      </td>
+                      <td style={{ ...s.td, color: "#475569" }}>{u.username || "—"}</td>
+                      <td style={{ ...s.td, color: "#475569" }}>{u.email}</td>
+                      <td style={s.td}>{u.company_name || "—"}</td>
+                      <td style={s.td}><RoleBadge role={u.role} /></td>
+                      <td style={s.td}><StatusBadge status={u.status || "invited"} /></td>
+                      <td style={{ ...s.td, textAlign: "right" }}>
+                        <div style={s.actionsCell}>
+                          {u.status === "invited" && (
+                            <button style={s.resendBtn} onClick={() => handleResendRegistration(u)} title="Resend invitation email">Resend</button>
+                          )}
+                          <button style={s.editBtn} onClick={() => openEdit(u)} title="View / edit user">View / Edit</button>
+                          <button style={s.deleteBtn} onClick={() => setDeleteTarget(u)} title="Delete user">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {!loading && !fetchError && total > 0 && (
+            <div style={s.pagerBar}>
+              <span style={s.pagerText}>
+                Showing {(pageNum - 1) * PAGE_SIZE + 1} to {(pageNum - 1) * PAGE_SIZE + users.length} of {total} {total === 1 ? "user" : "users"}
+              </span>
+              {pages > 1 && (
+                <div style={s.pager}>
+                  <button style={s.pageBtn} disabled={pageNum === 1} onClick={() => setPageNum(pageNum - 1)}>‹</button>
+                  {Array.from({ length: pages }, (_, i) => i + 1)
+                    .filter(n => n === 1 || n === pages || Math.abs(n - pageNum) <= 1)
+                    .map((n, idx, arr) => (
+                      <React.Fragment key={n}>
+                        {idx > 0 && n - arr[idx - 1] > 1 && <span style={{ color: "#94a3b8" }}>…</span>}
+                        <button style={{ ...s.pageBtn, ...(n === pageNum ? s.pageBtnActive : {}) }} onClick={() => setPageNum(n)}>{n}</button>
+                      </React.Fragment>
+                    ))}
+                  <button style={s.pageBtn} disabled={pageNum === pages} onClick={() => setPageNum(pageNum + 1)}>›</button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ───────── EXISTING VIEW (Company Admin / Regional Manager / Property Manager) ───────── */}
+      {!isSA && (
+        <>
       {/* HEADER */}
       <div style={s.header}>
         <div>
@@ -462,6 +700,9 @@ function ViewUsers() {
           </table>
         )}
       </div>
+
+        </>
+      )}
 
       {/* ── CREATE MODAL ─────────────────────────────────────────────────── */}
       {showCreate && (
@@ -637,6 +878,24 @@ function ViewUsers() {
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const s = {
+  backLink:    { background: "none", border: "none", color: "#4f46e5", cursor: "pointer", fontWeight: 600, fontSize: 13, padding: 0, marginBottom: 6 },
+  companyBanner: { display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", background: "#fff", borderRadius: 12, padding: "14px 20px", marginBottom: 18, boxShadow: "0 1px 4px rgba(15,23,42,.07)" },
+  bannerAvatar:  { width: 40, height: 40, borderRadius: 10, background: "#4f46e5", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13 },
+  bannerItem:    { display: "flex", flexDirection: "column", gap: 3 },
+  bannerKey:     { fontSize: 11.5, color: "#94a3b8" },
+  bannerVal:     { fontSize: 14, fontWeight: 600, color: "#0f172a" },
+  saFilters:   { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 18, display: "flex", flexDirection: "column", gap: 14, boxShadow: "0 1px 4px rgba(15,23,42,.07)" },
+  filterRow:   { display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" },
+  filterField: { display: "flex", flexDirection: "column", gap: 4, flex: "1 1 180px", minWidth: 160 },
+  filterLabel: { fontSize: 11.5, color: "#64748b", fontWeight: 600 },
+  filterSelect:{ padding: "9px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, background: "#fff" },
+  clearBtn:    { background: "#fff", color: "#475569", border: "1px solid #e2e8f0", padding: "9px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 },
+  pagerBar:    { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 8 },
+  pagerText:   { fontSize: 12.5, color: "#64748b" },
+  pager:       { display: "flex", gap: 6, alignItems: "center" },
+  pageBtn:     { minWidth: 32, height: 32, border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, cursor: "pointer", fontSize: 13 },
+  pageBtnActive: { background: "#6366f1", color: "#fff", borderColor: "#6366f1" },
+  linkBtn:     { background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontWeight: 600, fontSize: 14, textDecoration: "underline" },
   page:        { padding: "32px", background: "#f8fafc", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif" },
   header:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 },
   pageTitle:   { margin: 0, fontSize: 24, fontWeight: 700, color: "#0f172a" },
