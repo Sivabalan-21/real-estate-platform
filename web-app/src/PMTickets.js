@@ -98,6 +98,7 @@ function PMTickets() {
       const params = new URLSearchParams();
       if (statusFilter) params.set("status", statusFilter);
       if (propertyFilter) params.set("property_id", propertyFilter);
+      params.set("sort", "updated_at");
 
       const res = await fetch(`${API}/pm/tickets?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },

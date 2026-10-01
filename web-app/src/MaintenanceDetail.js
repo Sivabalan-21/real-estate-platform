@@ -68,6 +68,80 @@ function StatusStepper({ status }) {
   );
 }
 
+function RatingPrompt({ ticket, token, onRated }) {
+  const [hover, setHover] = useState(0);
+  const [picked, setPicked] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  if (ticket.status !== "closed") return null;
+
+  if (ticket.rating) {
+    return (
+      <p style={{ fontSize: 14, color: "#475569" }}>
+        Your rating: <span style={{ color: "#f59e0b" }}>{"★".repeat(ticket.rating)}{"☆".repeat(5 - ticket.rating)}</span>
+      </p>
+    );
+  }
+
+  const submit = async () => {
+    if (!picked) return;
+    setSaving(true);
+    setErr("");
+    try {
+      const res = await fetch(`${API}/tickets/${ticket.id}/rating`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rating: picked }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.detail || "Could not save rating"); return; }
+      onRated();
+    } catch {
+      setErr("Server error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ margin: "16px 0" }}>
+      <p style={{ fontSize: 14, fontWeight: 600, color: "#0f172a", margin: "0 0 6px" }}>How did we do?</p>
+      <div>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            aria-label={`${n} star${n > 1 ? "s" : ""}`}
+            onClick={() => setPicked(n)}
+            onMouseEnter={() => setHover(n)}
+            onMouseLeave={() => setHover(0)}
+            style={{
+              background: "none", border: "none", cursor: "pointer", fontSize: 28, padding: 2,
+              color: n <= (hover || picked) ? "#f59e0b" : "#cbd5e1",
+            }}
+          >
+            ★
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!picked || saving}
+        style={{
+          marginTop: 6, padding: "8px 16px", borderRadius: 8, border: "none",
+          background: !picked || saving ? "#cbd5e1" : "#2563eb", color: "#fff",
+          cursor: !picked || saving ? "default" : "pointer", fontSize: 14,
+        }}
+      >
+        {saving ? "Saving…" : "Submit rating"}
+      </button>
+      {err && <p style={{ color: "#b91c1c", fontSize: 13, marginTop: 6 }}>{err}</p>}
+    </div>
+  );
+}
+
 function MaintenanceDetail() {
   const { id } = useParams();
   const location = useLocation();
@@ -114,6 +188,8 @@ function MaintenanceDetail() {
     );
   }
 
+
+
   if (!ticket) return null;
 
   const st = STATUS_STYLES[ticket.status] || { bg: "#f1f5f9", color: "#475569", label: ticket.status };
@@ -159,6 +235,7 @@ function MaintenanceDetail() {
           </div>
         )}
 
+        <RatingPrompt ticket={ticket} token={token} onRated={fetchTicket} />
         <TicketComments ticketId={ticket.id} role="Tenant" styles={s} />
 
         <div style={s.photosSection}>
