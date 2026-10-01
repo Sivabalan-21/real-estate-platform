@@ -32,6 +32,10 @@ function VendorJobDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [invFile, setInvFile] = useState(null);
+  const [invError, setInvError] = useState("");
+  const [invSubmitting, setInvSubmitting] = useState(false);
+  const [invDone, setInvDone] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -82,7 +86,35 @@ function VendorJobDetail() {
       setSubmitting(false);
     }
   };
+  const onPickInvoice = (e) => {
+    const f = e.target.files && e.target.files[0];
+    setInvError("");
+    setInvDone(false);
+    if (!f) { setInvFile(null); return; }
+    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) { setInvFile(null); setInvError("Please choose a PDF file."); return; }
+    if (f.size > MAX_PDF_BYTES) { setInvFile(null); setInvError("File too large (max 10MB)"); return; }
+    setInvFile(f);
+  };
 
+  const submitInvoice = async () => {
+    setInvError("");
+    if (!invFile) { setInvError("Please attach your invoice as a PDF."); return; }
+    const fd = new FormData();
+    fd.append("file", invFile);
+    setInvSubmitting(true);
+    try {
+      await vendorFetch(`/vendor/jobs/${encodeURIComponent(id)}/invoice`, { method: "POST", body: fd });
+      setInvFile(null);
+      setInvDone(true);
+      await load();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      setInvError(e.message || "Could not upload your invoice. Please try again.");
+    } finally {
+      setInvSubmitting(false);
+    }
+  };
   if (loadError) {
     const gone = loadError.status === 404;
     return (
@@ -120,7 +152,57 @@ function VendorJobDetail() {
         </p>
         {job.description && <p style={s.desc}>{job.description}</p>}
       </div>
+      {(job.can_submit_invoice || (job.invoices || []).length > 0) && (
+        <div style={s.card}>
+          <h3 style={s.h3}>Upload Final Invoice</h3>
 
+          {job.can_submit_invoice && (
+            <>
+              <label style={{ ...s.drop, ...(invFile ? s.dropHas : null) }}>
+                <input type="file" accept="application/pdf,.pdf" onChange={onPickInvoice} style={s.fileInput} aria-label="Invoice PDF" />
+                {invFile ? (
+                  <>
+                    <strong>{invFile.name}</strong>
+                    <span style={s.muted}>{(invFile.size / 1024 / 1024).toFixed(2)} MB, click to change</span>
+                  </>
+                ) : (
+                  <>
+                    <strong>Choose invoice PDF</strong>
+                    <span style={s.muted}>PDF only, up to 10 MB</span>
+                  </>
+                )}
+              </label>
+              <button
+                type="button"
+                onClick={submitInvoice}
+                disabled={invSubmitting || !invFile}
+                style={{ marginTop: 10, padding: "9px 16px", border: "none", borderRadius: 8, background: "#4f46e5", color: "#fff", fontWeight: 600, cursor: invSubmitting || !invFile ? "not-allowed" : "pointer", opacity: invSubmitting || !invFile ? 0.6 : 1 }}
+              >
+                {invSubmitting ? "Uploading…" : "Submit invoice"}
+              </button>
+              {invError && <p style={{ color: "#b91c1c", fontSize: 13 }}>{invError}</p>}
+            </>
+          )}
+
+          {(invDone || (job.invoices || []).length > 0) && (
+            <p style={{ color: "#166534", fontSize: 13 }}>
+              Invoice submitted. Your payment will be processed by the property manager.
+            </p>
+          )}
+
+          {(job.invoices || []).length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <p style={s.muted}>Your submitted invoices</p>
+              {job.invoices.map((inv) => (
+                <p key={inv.id} style={{ margin: "4px 0", fontSize: 13 }}>
+                  <a href={inv.url} target="_blank" rel="noreferrer">{inv.filename}</a>
+                  <span style={s.muted}> · {formatDateTime(inv.uploaded_at)}{inv.size_kb ? ` · ${inv.size_kb} KB` : ""}</span>
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {job.can_submit_quote && (
         <div style={{ ...s.card, borderColor: "#fcd34d", background: "#fffbeb" }}>
           <h3 style={s.h3}>Upload your quote</h3>
