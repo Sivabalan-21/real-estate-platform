@@ -22,8 +22,8 @@ function isImageAttachment(attachment) {
 
 export default function PropertyManagement() {
   const navigate = useNavigate();
-  const token    = localStorage.getItem("token");
-  const role     = localStorage.getItem("role");
+  const token    = sessionStorage.getItem("token");
+  const role     = sessionStorage.getItem("role");
   const isPM     = role === "Property Manager";
   const canManage = ["Admin", "Company Admin", "Super Admin", "Property Manager"].includes(role);
 

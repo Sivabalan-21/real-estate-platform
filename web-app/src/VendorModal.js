@@ -12,7 +12,7 @@ export const VENDOR_CATEGORIES = [
 // vendor = null  -> Add mode  (POST /vendors)
 // vendor = {...} -> Edit mode (PUT /vendors/:id)
 function VendorModal({ vendor, onClose, onSaved }) {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const isEdit = Boolean(vendor);
 
   const [form, setForm] = useState({

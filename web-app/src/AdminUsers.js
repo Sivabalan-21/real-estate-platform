@@ -44,8 +44,8 @@ function StatusBadge({ status }) {
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 function AdminUsers() {
   const navigate = useNavigate();
-  const token    = localStorage.getItem("token");
-  const currentRole = localStorage.getItem("role");
+  const token    = sessionStorage.getItem("token");
+  const currentRole = sessionStorage.getItem("role");
   const allowedRoles = ROLE_OPTIONS_BY_CURRENT_ROLE[currentRole] || [];
 
   const [users,       setUsers]       = useState([]);

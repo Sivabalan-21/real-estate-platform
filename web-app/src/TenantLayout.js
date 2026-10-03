@@ -30,9 +30,9 @@ function useIsMobile(breakpoint = 640) {
 function TenantLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const username = localStorage.getItem("username");
-  const role = localStorage.getItem("role");
-  const token = localStorage.getItem("token");
+  const username = sessionStorage.getItem("username");
+  const role = sessionStorage.getItem("role");
+  const token = sessionStorage.getItem("token");
   const isMobile = useIsMobile();
 
   // The always-visible 230px sidebar ate over half of a 375px screen and
@@ -79,7 +79,7 @@ function TenantLayout() {
         return;
       }
       setDisplayName(data.full_name || username);
-      localStorage.setItem("display_name", data.full_name || username || "");
+      sessionStorage.setItem("display_name", data.full_name || username || "");
       setPhone(data.phone || "");
       setEditOpen(false);
     } catch {
@@ -97,8 +97,8 @@ function TenantLayout() {
   }, [role, navigate]);
 
   const logout = () => {
-    const slug = localStorage.getItem("company_slug");
-    localStorage.clear();
+    const slug = sessionStorage.getItem("company_slug");
+    sessionStorage.clear();
     navigate(slug ? `/portal/${slug}` : "/");
   };
 

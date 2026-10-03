@@ -104,8 +104,8 @@ function Donut({ counts, total }) {
 // ─── PAGE ────────────────────────────────────────────────────────────────────
 function Dashboard() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
-  const username = localStorage.getItem("display_name") || localStorage.getItem("username");
+  const token = sessionStorage.getItem("token");
+  const username = sessionStorage.getItem("display_name") || sessionStorage.getItem("username");
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);

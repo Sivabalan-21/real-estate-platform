@@ -5,7 +5,7 @@ const API = "http://localhost:8000";
 
 function OwnerDashboard() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(true);

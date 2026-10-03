@@ -67,7 +67,7 @@ export function QuoteVersions({ quotes }) {
 }
 
 function AttachmentTabs({ ticketId, refreshKey = 0, jumpTo, onRequestDelete }) {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const [data, setData] = useState({ photos: [], quotes: [], invoices: [], pm_notes: [] });
   const [active, setActive] = useState("photos");
   const [loading, setLoading] = useState(true);

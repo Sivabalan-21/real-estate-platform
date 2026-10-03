@@ -66,7 +66,7 @@ function commentTimestamp(value) {
 }
 
 function getUnreadState(ticketId, comments, username, baselines) {
-  const storedLastViewed = localStorage.getItem(`${LAST_VIEWED_PREFIX}${ticketId}`);
+  const storedLastViewed = sessionStorage.getItem(`${LAST_VIEWED_PREFIX}${ticketId}`);
   const storedTimestamp = storedLastViewed ? commentTimestamp(Number(storedLastViewed)) : 0;
 
   const latestVisibleCommentAt = comments.reduce((latest, comment) => {
@@ -80,8 +80,8 @@ function getUnreadState(ticketId, comments, username, baselines) {
 }
 
 function OwnerTickets() {
-  const token = localStorage.getItem("token");
-  const username = localStorage.getItem("username");
+  const token = sessionStorage.getItem("token");
+  const username = sessionStorage.getItem("username");
   const location = useLocation();
   const navigate = useNavigate();
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const PALETTE = [
   "#6366f1","#0ea5e9","#10b981","#f59e0b",
@@ -16,9 +16,26 @@ function initials(name = "") {
   return name.split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
 }
 
+// Which role a deep link belongs to, so the login form can pre-select it.
+function roleForPath(path = "") {
+  if (path.startsWith("/tenant")) return "Tenant";
+  if (path.startsWith("/owner"))  return "Owner";
+  if (path.startsWith("/pm"))     return "Property Manager";
+  if (path.startsWith("/vendor")) return "Vendor";
+  if (path.startsWith("/admin"))  return "Company Admin";
+  return "Company Admin";
+}
+
 export default function CompanyPortal() {
   const { slug }  = useParams();
   const navigate  = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // ?next=/tenant/maintenance/<id> comes from links in emails. Only
+  // same-site paths are accepted.
+  const rawNext = searchParams.get("next");
+  const nextPath =
+    rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : null;
 
   const [portal,        setPortal]        = useState(null);
   const [portalErr,     setPortalErr]     = useState("");
@@ -26,10 +43,23 @@ export default function CompanyPortal() {
 
   const [username,   setUsername]   = useState("");
   const [password,   setPassword]   = useState("");
-  const [role,       setRole]       = useState("Company Admin");
+  const [role,       setRole]       = useState(roleForPath(nextPath || ""));
   const [showPass,   setShowPass]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loginErr,   setLoginErr]   = useState("");
+
+    // Email deep link (?next=...): always start from a clean login in this tab.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("next")) {
+      sessionStorage.clear();
+    }
+  }, []);
+  // Already signed in and following an email link: go straight to it.
+  useEffect(() => {
+    if (nextPath && sessionStorage.getItem("token") && sessionStorage.getItem("role")) {
+      navigate(nextPath, { replace: true });
+    }
+  }, [nextPath, navigate]);
 
   useEffect(() => {
     fetch(`http://localhost:8000/portal/${slug}`)
@@ -53,17 +83,20 @@ export default function CompanyPortal() {
       if (!res.ok) { setLoginErr(data.detail || "Invalid credentials"); return; }
 
       const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-      localStorage.clear();
-      localStorage.setItem("token",        data.access_token);
-      localStorage.setItem("role",         payload.role);
-      localStorage.setItem("username",     payload.sub);
-      localStorage.setItem("display_name", data.full_name || payload.sub);
-      localStorage.setItem("company_name", data.company_name || "");
-      localStorage.setItem("company_code", data.company_code || "");
-      localStorage.setItem("company_slug", data.company_slug || slug);
-      localStorage.setItem("status",       data.status);
+      sessionStorage.clear();
+      sessionStorage.setItem("token",        data.access_token);
+      sessionStorage.setItem("role",         payload.role);
+      sessionStorage.setItem("username",     payload.sub);
+      sessionStorage.setItem("display_name", data.full_name || payload.sub);
+      sessionStorage.setItem("company_name", data.company_name || "");
+      sessionStorage.setItem("company_code", data.company_code || "");
+      sessionStorage.setItem("company_slug", data.company_slug || slug);
+      sessionStorage.setItem("status",       data.status);
 
       const r = payload.role;
+      // Came from an email link: go back to it (RequireRole sends the user to
+      // their own home if this role isn't allowed there).
+      if (nextPath) { navigate(nextPath, { replace: true }); return; }
       if      (r === "Company Admin")    navigate("/admin/dashboard");
       else if (r === "Regional Manager")            navigate("/admin/dashboard");
       else if (r === "Property Manager") navigate("/pm/dashboard");

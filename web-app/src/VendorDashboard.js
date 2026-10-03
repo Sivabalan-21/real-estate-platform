@@ -68,7 +68,7 @@ function Section({ title, count, jobs, onOpen, accent }) {
 
 function VendorDashboard() {
   const navigate = useNavigate();
-  const displayName = localStorage.getItem("display_name") || localStorage.getItem("username") || "Vendor";
+  const displayName = sessionStorage.getItem("display_name") || sessionStorage.getItem("username") || "Vendor";
 
   const [data, setData] = useState(null);      // {vendor, jobs, reason}
   const [error, setError] = useState("");

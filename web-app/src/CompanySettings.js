@@ -8,7 +8,7 @@ function CompanySettings() {
   const uploadLogo = async () => {
     if (!file) { setStatus("error"); setMessage("Please select a file first."); return; }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const formData = new FormData();
     formData.append("file", file);
 

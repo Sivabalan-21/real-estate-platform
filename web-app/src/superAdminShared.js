@@ -25,7 +25,7 @@ export function apiGet(path, token, params) {
 // Expired / invalid JWT: same behaviour the other pages use — clear the
 // session and go back to the login screen.
 export function endSession(navigate) {
-  localStorage.clear();
+  sessionStorage.clear();
   navigate("/");
 }
 

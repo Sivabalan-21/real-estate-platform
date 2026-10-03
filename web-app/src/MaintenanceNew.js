@@ -16,7 +16,7 @@ const MAX_PHOTOS = 3;
 
 function MaintenanceNew() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [unit, setUnit] = useState(null);
   const [unitError, setUnitError] = useState("");

@@ -1,6 +1,8 @@
 from datetime import datetime
 import os
 import re
+import traceback
+import traceback
 import uuid
 
 import bcrypt
@@ -50,7 +52,7 @@ from schemas import (
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, maybe_notify_ticket_closed, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, maybe_notify_vendor_requote, maybe_notify_ticket_closed, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
 from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
 from services.vendor_service import get_vendor_for_user
@@ -946,7 +948,7 @@ async def upload_logo_by_token(
     # Update company logo path and clear token
     company = db.query(Company).filter(Company.id == user.company_id).first()
     if company:
-        company.logo = f"/uploads/{filename}"
+        company.logo = f"{BACKEND_URL}/uploads/{filename}"
         db.commit()
 
     user.reset_token  = None
@@ -2187,6 +2189,10 @@ async def update_maintenance_ticket(
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
     try:
+        await maybe_notify_vendor_requote(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+    try:
         await maybe_notify_ticket_closed(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
@@ -2382,9 +2388,20 @@ async def transition_ticket_endpoint(
     db.commit()
     db.refresh(ticket)
     try:
+        await maybe_notify_quote_submitted(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
+    try:
+        await maybe_notify_vendor_requote(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
+    try:
         await maybe_notify_ticket_closed(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
@@ -2832,9 +2849,12 @@ async def assign_ticket_vendor(
     email_sent = False
     if vendor.email:
         try:
-            email_sent = await send_vendor_assignment_email(
-                vendor, ticket, f"{FRONTEND_URL}/vendor-access/{token}"
-            )
+            if vendor.user_id:
+                # vendor has a login -> send them through the portal login, then to the job
+                link = build_login_link(db, ticket.company_id, f"/vendor/jobs/{ticket.id}")
+            else:
+                link = f"{FRONTEND_URL}/vendor-access/{token}"
+            email_sent = await send_vendor_assignment_email(vendor, ticket, link)
         except Exception as exc:  # noqa: BLE001
             print(f"[assign-vendor] email to {vendor.email} failed: {exc}")
 
@@ -2886,6 +2906,12 @@ async def update_pm_ticket(
         await maybe_notify_quote_submitted(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
+    try:
+        await maybe_notify_vendor_requote(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
     return serialize_pm_ticket_detail(ticket, db)
 
 

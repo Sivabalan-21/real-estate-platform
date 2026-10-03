@@ -78,7 +78,7 @@ function RoleBadge({ role }) {
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 function ViewUsers() {
 
-  const currentRole  = localStorage.getItem("role");
+  const currentRole  = sessionStorage.getItem("role");
   
 
   const canEdit = (targetRole) => {
@@ -87,7 +87,7 @@ function ViewUsers() {
   };
 
   const navigate = useNavigate();
-  const token    = localStorage.getItem("token");
+  const token    = sessionStorage.getItem("token");
 
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -349,8 +349,8 @@ function ViewUsers() {
       if (!res.ok) {
         const data = await res.json();
         if (res.status === 401) {
-          const companySlug = localStorage.getItem("company_slug");
-          localStorage.clear();
+          const companySlug = sessionStorage.getItem("company_slug");
+          sessionStorage.clear();
           navigate(companySlug ? `/portal/${companySlug}` : "/");
           return;
         }

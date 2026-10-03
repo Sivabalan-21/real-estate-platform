@@ -1,17 +1,36 @@
 import asyncio
 import os
 import traceback
+from urllib.parse import quote
 
-from models import User, PropertyAssignment
-from rbac import ROLE_OWNER,ROLE_TENANT
+from models import User, PropertyAssignment, Company, Vendor, VendorTicketAccess
+from rbac import ROLE_OWNER, ROLE_TENANT
 from ticket_states import PENDING_OWNER_APPROVAL
-print("[notify] notify_ticket_created called, MAIL_SERVER =", os.getenv("MAIL_SERVER"))
+from tokens import create_vendor_access_token, is_token_expired
 CURRENCY = "₹"              # change if your quotes use another currency
 SEND_TIMEOUT_SECONDS = 20   # stops a dead mail server from hanging the API
 
 
 def _frontend_url() -> str:
     return os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+
+def _app_link(ticket, db, path: str) -> str:
+    """Link into the app for an email.
+
+    Goes through the company's own login page (/portal/<slug>) and passes the
+    real destination as ?next=, so a signed-out person logs in on THEIR
+    company's page and is then taken straight to `path`. Falls back to the
+    plain app link if the company has no slug.
+    """
+    slug = None
+    company_id = getattr(ticket, "company_id", None)
+    if company_id:
+        company = db.query(Company).filter(Company.id == company_id).first()
+        slug = company.slug if company else None
+    if not slug:
+        return f"{_frontend_url()}{path}"
+    return f"{_frontend_url()}/portal/{slug}?next={quote(path, safe='')}"
 
 
 async def _send(to_email, subject, body) -> bool:
@@ -75,7 +94,7 @@ async def notify_ticket_created(ticket, db):
             db.query(User).filter(User.username == ticket.created_by).first()
             if ticket.created_by else None
         )
-        link = f"{_frontend_url()}/pm/tickets/{ticket.id}"
+        link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
         subject = f"New Maintenance Request — {place}"
 
         for pm in pms:
@@ -126,9 +145,9 @@ async def notify_quote_submitted(ticket, db):
         try:
             amount = f"{CURRENCY}{float(ticket.quote_amount):,.2f}"
         except (TypeError, ValueError):
-            amount = "-"
+            amount = "see attached quote PDF in the portal"
 
-        link = f"{_frontend_url()}/owner/approvals/{ticket.id}"
+        link = _app_link(ticket, db, "/owner/approvals")
         subject = f"Quote Ready for Approval — {place}"
 
         for owner in owners:
@@ -172,7 +191,7 @@ async def notify_ticket_closed(ticket, db):
             return
 
         place = _place(ticket)
-        link = f"{_frontend_url()}/tenant/maintenance/{ticket.id}"  # TODO: confirm tenant route
+        link = _app_link(ticket, db, f"/tenant/maintenance/{ticket.id}")
         subject = f"Maintenance Request Closed - {place}"
         body = f"""
 Hi {_display_name(tenant)},
@@ -214,7 +233,7 @@ async def notify_quote_received_pm(ticket, db, vendor_name: str):
         except (TypeError, ValueError):
             amount = "see attached PDF"
 
-        link = f"{_frontend_url()}/pm/tickets/{ticket.id}"
+        link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
         subject = f"Quote Received - {place}"
         for pm in pms:
             body = f"""
@@ -251,8 +270,73 @@ async def notify_quote_rejected_pm(ticket, db, owner_name: str, reason: str):
                     f"{owner_name} rejected the quote for {_place(ticket)}.\n\n"
                     f"Reason: {reason}\n\n"
                     f"You can request a revised quote from the vendor here:\n"
-                    f"{_frontend_url()}/pm/tickets/{ticket.id}\n"
+                    f"{_app_link(ticket, db, f'/pm/tickets/{ticket.id}')}\n"
                 ),
             )
     except Exception as exc:       # never let an email problem break the reject action
         print(f"[notify] rejection email failed for ticket {ticket.id}: {exc}")
+
+
+def _vendor_link(ticket, vendor, db) -> str:
+    """Vendor with a login -> portal login then the job page.
+    Directory-only vendor -> a valid token link (reuse unexpired, else mint)."""
+    if vendor.user_id:
+        return _app_link(ticket, db, f"/vendor/jobs/{ticket.id}")
+
+    access = (
+        db.query(VendorTicketAccess)
+        .filter(VendorTicketAccess.ticket_id == ticket.id,
+                VendorTicketAccess.vendor_id == vendor.id)
+        .order_by(VendorTicketAccess.expires_at.desc())
+        .first()
+    )
+    if not access or is_token_expired(access.expires_at):
+        token, expires_at = create_vendor_access_token()
+        access = VendorTicketAccess(token=token, vendor_id=vendor.id,
+                                    ticket_id=ticket.id, expires_at=expires_at,
+                                    created_by="system")
+        db.add(access)
+        db.commit()
+    return f"{_frontend_url()}/vendor-access/{access.token}"
+
+
+async def notify_vendor_requote(ticket, db):
+    """Tell the assigned vendor the quote was rejected and a revised one is wanted."""
+    try:
+        if not ticket.assigned_vendor_id:
+            print(f"[notify] ticket {ticket.id}: no vendor assigned, skipping re-quote email")
+            return
+        vendor = db.query(Vendor).filter(Vendor.id == ticket.assigned_vendor_id).first()
+        if not vendor or not vendor.email:
+            print(f"[notify] ticket {ticket.id}: vendor has no email, skipping re-quote email")
+            return
+
+        place = _place(ticket)
+        link = _vendor_link(ticket, vendor, db)
+        subject = f"Revised Quote Requested — {place}"
+        body = f"""
+Hi {vendor.name},
+
+Your previous quote for this job was not approved. Please review the
+latest comments and submit a revised quote.
+
+Property : {place}
+Category : {ticket.category or "-"}
+Issue    : {(ticket.description or "-")[:200]}
+
+Submit your revised quote:
+{link}
+
+Regards,
+Property Portal Team
+"""
+        await _send(vendor.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_vendor_requote error: {exc}")
+        traceback.print_exc()
+
+
+async def maybe_notify_vendor_requote(ticket, db, old_status):
+    """Only on rejected -> quote_requested (first assignment already has its own email)."""
+    if old_status == "rejected" and ticket.status == "quote_requested":
+        await notify_vendor_requote(ticket, db)

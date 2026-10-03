@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { fetchAttachments, formatDateTime, QuoteVersions } from "./AttachmentTabs";
 
 function OwnerQuotes({ ticketId }) {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const [quotes, setQuotes] = useState(null);
   const [error, setError] = useState("");
 

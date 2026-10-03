@@ -4,12 +4,12 @@ import { useNavigate, useLocation, Outlet } from "react-router-dom";
 function Layout() {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const role      = localStorage.getItem("role");
-  const username  = localStorage.getItem("username");
-  const displayName = localStorage.getItem("display_name") || username;
+  const role      = sessionStorage.getItem("role");
+  const username  = sessionStorage.getItem("username");
+  const displayName = sessionStorage.getItem("display_name") || username;
 
   const logout = () => {
-    localStorage.clear();
+    sessionStorage.clear();
     navigate("/");
   };
 

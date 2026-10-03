@@ -20,9 +20,9 @@ const ROLE_HOME = {
 function OwnerLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const username = localStorage.getItem("username");
-  const displayName = localStorage.getItem("display_name") || username;
-  const role = localStorage.getItem("role");
+  const username = sessionStorage.getItem("username");
+  const displayName = sessionStorage.getItem("display_name") || username;
+  const role = sessionStorage.getItem("role");
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
 
   // Guard: only an Owner should ever see this shell. Anyone else who lands here
@@ -40,7 +40,7 @@ function OwnerLayout() {
   // so the count doesn't go stale until the next 30s tick.
   useEffect(() => {
     if (role !== "Owner") return;
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     let cancelled = false;
 
     const fetchCount = async () => {
@@ -62,8 +62,8 @@ function OwnerLayout() {
   }, [role, location.pathname]);
 
   const logout = () => {
-    const slug = localStorage.getItem("company_slug");
-    localStorage.clear();
+    const slug = sessionStorage.getItem("company_slug");
+    sessionStorage.clear();
     navigate(slug ? `/portal/${slug}` : "/");
   };
 

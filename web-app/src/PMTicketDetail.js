@@ -188,7 +188,7 @@ function AttachmentDeleteModal({ attachment, submitting, error, onCancel, onConf
 function PMTicketDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [ticket, setTicket] = useState(null);
   const [loading, setLoading] = useState(true);

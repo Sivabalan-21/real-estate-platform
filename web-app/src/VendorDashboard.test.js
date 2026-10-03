@@ -34,9 +34,9 @@ const renderApp = (path) => render(
 );
 
 beforeEach(() => {
-  localStorage.clear();
-  localStorage.setItem("token", "tok");
-  localStorage.setItem("display_name", "vendor");
+  sessionStorage.clear();
+  sessionStorage.setItem("token", "tok");
+  sessionStorage.setItem("display_name", "vendor");
 });
 
 test("lists jobs grouped by need, sends bearer token, shows vendor name", async () => {
