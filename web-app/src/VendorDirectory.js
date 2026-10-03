@@ -29,7 +29,7 @@ function Rating({ vendor }) {
 }
 
 function VendorDirectory() {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);

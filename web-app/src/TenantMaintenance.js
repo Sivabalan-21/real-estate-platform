@@ -32,7 +32,7 @@ function formatDate(dateStr) {
 // than the property-wide route filtered client-side.
 function TenantMaintenance() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [hasUnit, setHasUnit] = useState(false);
   const [unitError, setUnitError] = useState("");

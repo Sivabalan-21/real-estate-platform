@@ -215,12 +215,12 @@ function Register() {
           if (loginRes.ok) {
             const loginData = await loginRes.json();
             const payload = JSON.parse(atob(loginData.access_token.split(".")[1]));
-            localStorage.setItem("token", loginData.access_token);
-            localStorage.setItem("role", payload.role);
-            localStorage.setItem("username", payload.sub);
-            localStorage.setItem("company_name", loginData.company_name || "");
-            localStorage.setItem("company_slug", loginData.company_slug || "");
-            localStorage.setItem("status", loginData.status || "active");
+            sessionStorage.setItem("token", loginData.access_token);
+            sessionStorage.setItem("role", payload.role);
+            sessionStorage.setItem("username", payload.sub);
+            sessionStorage.setItem("company_name", loginData.company_name || "");
+            sessionStorage.setItem("company_slug", loginData.company_slug || "");
+            sessionStorage.setItem("status", loginData.status || "active");
             setTimeout(() => navigate("/tenant/dashboard"), 2000);
             return;
           }

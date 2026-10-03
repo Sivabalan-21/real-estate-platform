@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 import Login from "./Login";
 import ResetPassword from "./ResetPassword";
@@ -23,6 +23,7 @@ import PMTickets from "./PMTickets";
 import PMTicketDetail from "./PMTicketDetail";
 import CreateUser from "./CreateUser";
 import CompanyPortal from "./CompanyPortal";
+import UploadLogo from "./UploadLogo";
 import CompanySettings from "./CompanySettings";
 
 import OwnerLayout from "./OwnerLayout";
@@ -51,11 +52,22 @@ import VendorAccess from "./VendorAccess";
 // Blocks access to a role-specific route group before it renders, instead
 // of letting the page mount and show an empty/wrong state to the wrong
 // role. Redirects to the person's own dashboard rather than a dead end.
+//
+// When nobody is signed in, the page they were trying to open is passed to
+// the login screen (state.from) so that, after signing in, they land back on
+// it -- e.g. the ticket link in a "ticket closed" email.
 function RequireRole({ allowed, children }) {
-  const role = localStorage.getItem("role");
+  const role = sessionStorage.getItem("role");
+  const location = useLocation();
 
   if (!role) {
-    return <Navigate to="/" replace />;
+    return (
+      <Navigate
+        to="/"
+        replace
+        state={{ from: `${location.pathname}${location.search}` }}
+      />
+    );
   }
 
   if (!allowed.includes(role)) {
@@ -86,6 +98,7 @@ function App() {
 
         {/* ── REGISTRATION (invite link, no auth needed) ───── */}
         <Route path="/register/:token"         element={<Register />} />
+        <Route path="/upload-logo/:token" element={<UploadLogo />} />
         <Route path="/vendor-access/:token"    element={<VendorAccess />} />
         {/* Alias per spec (/vendor/:token). Static /vendor/dashboard etc. still win. */}
         <Route path="/vendor/:token"           element={<VendorAccess />} />
@@ -125,6 +138,7 @@ function App() {
           <Route path="tickets"                element={<OwnerTickets />} />
           <Route path="tickets/:id"             element={<OwnerTicketDetail />} />
           <Route path="approvals"              element={<OwnerApprovals />} />
+          <Route path="approvals/:id"          element={<OwnerApprovals />} />
           <Route path="reports"                element={<OwnerReports />} />
         </Route>
 

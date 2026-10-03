@@ -26,9 +26,9 @@ const ROLE_HOME = {
 function PMLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const username = localStorage.getItem("username");
-  const displayName = localStorage.getItem("display_name") || username;
-  const role = localStorage.getItem("role");
+  const username = sessionStorage.getItem("username");
+  const displayName = sessionStorage.getItem("display_name") || username;
+  const role = sessionStorage.getItem("role");
 
     const [needsAttention, setNeedsAttention] = useState(0);
 
@@ -36,7 +36,7 @@ function PMLayout() {
   // Polled every 30s and re-fetched on navigation so it clears after the PM acts.
   useEffect(() => {
     if (role !== "Property Manager") return;
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     let cancelled = false;
 
     const fetchCount = async () => {
@@ -64,8 +64,8 @@ function PMLayout() {
   }, [role, navigate]);
 
   const logout = () => {
-    const slug = localStorage.getItem("company_slug");
-    localStorage.clear();
+    const slug = sessionStorage.getItem("company_slug");
+    sessionStorage.clear();
     navigate(slug ? `/portal/${slug}` : "/");
   };
 

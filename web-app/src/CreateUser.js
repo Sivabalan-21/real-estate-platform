@@ -9,8 +9,8 @@ function CreateUser() {
   const query = new URLSearchParams(location.search);
   const forcedRole = query.get("role");   // 🔥 Admin comes from URL
 
-  const currentRole = localStorage.getItem("role");
-  const token = localStorage.getItem("token");
+  const currentRole = sessionStorage.getItem("role");
+  const token = sessionStorage.getItem("token");
 
 
   // ✅ NEW: dynamic roles

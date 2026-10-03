@@ -146,7 +146,7 @@ function MaintenanceDetail() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [ticket, setTicket] = useState(null);
   const [error, setError] = useState("");

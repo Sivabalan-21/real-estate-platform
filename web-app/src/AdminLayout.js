@@ -4,12 +4,12 @@ import { useNavigate, useLocation, Outlet } from "react-router-dom";
 function AdminLayout() {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const username  = localStorage.getItem("username");
-  const role      = localStorage.getItem("role") || "Regional Manager";
+  const username  = sessionStorage.getItem("username");
+  const role      = sessionStorage.getItem("role") || "Regional Manager";
 
   // FIXED - won't logout on missing status
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     if (!token) return;
 
     const check = async () => {
@@ -20,9 +20,9 @@ function AdminLayout() {
 
         // Only logout on 401 (invalid token) — not on any other error
         if (res.status === 401 || res.status === 403) {
-          const companySlug = localStorage.getItem("company_slug");
+          const companySlug = sessionStorage.getItem("company_slug");
           alert("Your account has been suspended");
-          localStorage.clear();
+          sessionStorage.clear();
           navigate(companySlug ? `/portal/${companySlug}` : "/");
           return;
         }
@@ -31,22 +31,22 @@ function AdminLayout() {
 
         const data = await res.json();
 
-        const savedRole   = localStorage.getItem("role");
-        const savedStatus = localStorage.getItem("status");
+        const savedRole   = sessionStorage.getItem("role");
+        const savedStatus = sessionStorage.getItem("status");
 
         const statusChanged = data.status?.trim().toLowerCase() !== savedStatus?.trim().toLowerCase();
         const roleChanged   = data.role?.trim().toLowerCase()   !== savedRole?.trim().toLowerCase();
         const isSuspended   = data.status?.trim().toLowerCase() === "suspended";
 
         if (isSuspended || statusChanged || roleChanged) {
-          const companySlug = localStorage.getItem("company_slug");
-          localStorage.clear();
+          const companySlug = sessionStorage.getItem("company_slug");
+          sessionStorage.clear();
           navigate(companySlug ? `/portal/${companySlug}` : "/");
           return;
         }
 
-        localStorage.setItem("status", data.status);
-        localStorage.setItem("role",   data.role);
+        sessionStorage.setItem("status", data.status);
+        sessionStorage.setItem("role",   data.role);
 
       } catch {
         // Network error — ignore
@@ -59,8 +59,8 @@ function AdminLayout() {
   }, [navigate]);
 
   const logout = () => {
-    const companySlug = localStorage.getItem("company_slug");
-    localStorage.clear();
+    const companySlug = sessionStorage.getItem("company_slug");
+    sessionStorage.clear();
     if (companySlug) {
       navigate(`/portal/${companySlug}`);
     } else {

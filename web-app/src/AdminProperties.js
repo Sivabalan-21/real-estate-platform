@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 const API = "http://localhost:8000";
 
 function AdminProperties() {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const [properties, setProperties] = useState([]);
   const [dimensionTypes, setDimensionTypes] = useState([]);
   const [pms, setPms] = useState([]);

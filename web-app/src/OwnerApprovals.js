@@ -71,7 +71,7 @@ function DecisionModal({ decision, submitting, error, onCancel, onConfirm }) {
 function OwnerApprovals() {
   const navigate = useNavigate();
   const location = useLocation();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   // Set when we arrive here from a specific ticket row (e.g. OwnerTickets'
   // "Review" link) so we can scroll to and highlight just that card instead

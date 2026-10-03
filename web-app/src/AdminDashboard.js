@@ -11,10 +11,10 @@ const STAT_CARDS = [
 
 function AdminDashboard() {
   const navigate  = useNavigate();
-  const token     = localStorage.getItem("token");
-  const username  = localStorage.getItem("username");
-  const role      = localStorage.getItem("role");
-  const companyName = localStorage.getItem("company_name");
+  const token     = sessionStorage.getItem("token");
+  const username  = sessionStorage.getItem("username");
+  const role      = sessionStorage.getItem("role");
+  const companyName = sessionStorage.getItem("company_name");
 
   const visibleCards = role === "Company Admin"
   ? STAT_CARDS

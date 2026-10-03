@@ -19,8 +19,8 @@ function readDetail(body, fallback) {
 }
 
 export function signOut() {
-  const slug = localStorage.getItem("company_slug");
-  localStorage.clear();
+  const slug = sessionStorage.getItem("company_slug");
+  sessionStorage.clear();
   window.location.assign(slug ? `/portal/${slug}` : "/");
 }
 
@@ -28,7 +28,7 @@ export function signOut() {
 // instead of leaving a page that silently shows stale or empty data.
 export async function vendorFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) };
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let res;

@@ -5,8 +5,8 @@ const API = "http://localhost:8000";
 
 function PMDashboard() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
-  const username = localStorage.getItem("username");
+  const token = sessionStorage.getItem("token");
+  const username = sessionStorage.getItem("username");
 
   const [properties, setProperties] = useState([]);
   const [me, setMe] = useState(null);

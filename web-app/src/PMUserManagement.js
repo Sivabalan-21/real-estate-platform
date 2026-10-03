@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 
 function PMUserManagement() {
   const [users, setUsers] = useState([]);
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -13,7 +13,7 @@ function PMUserManagement() {
       const data = await res.json();
 
       // 🔥 ONLY SHOW PM CREATED USERS
-      const username = localStorage.getItem("username");
+      const username = sessionStorage.getItem("username");
 
       const filtered = data.filter(
         (u) => u.created_by === username

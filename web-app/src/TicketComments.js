@@ -88,8 +88,8 @@ function defaultStyles() {
 }
 
 function TicketComments({ ticketId, role, styles = {} }) {
-  const token = localStorage.getItem("token");
-  const currentUsername = localStorage.getItem("username");
+  const token = sessionStorage.getItem("token");
+  const currentUsername = sessionStorage.getItem("username");
   const ui = useMemo(() => ({ ...defaultStyles(), ...styles }), [styles]);
   const options = useMemo(
     () => VISIBILITY_OPTIONS[role] || VISIBILITY_OPTIONS.Tenant,
@@ -101,7 +101,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
   const [body, setBody] = useState("");
   const [visibleTo, setVisibleTo] = useState("all");
   const [lastViewedAt] = useState(() => {
-    const stored = localStorage.getItem(lastViewedKey);
+    const stored = sessionStorage.getItem(lastViewedKey);
     return stored ? Number(stored) : null;
   });
   const [loading, setLoading] = useState(true);
@@ -126,7 +126,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
         return;
       }
       setComments(Array.isArray(data) ? data : []);
-      if (initial) localStorage.setItem(lastViewedKey, String(Date.now()));
+      if (initial) sessionStorage.setItem(lastViewedKey, String(Date.now()));
     } catch {
       if (initial) setError("Could not load messages.");
     } finally {
@@ -185,7 +185,7 @@ function TicketComments({ ticketId, role, styles = {} }) {
     try {
       const response = await fetch(`${API}/tickets/${ticketId}/comments/${comment.id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        headers: { Authorization: `Bearer ${sessionStorage.getItem("token")}` },
       });
       const data = await response.json();
       if (!response.ok) {

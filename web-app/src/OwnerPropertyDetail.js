@@ -13,7 +13,7 @@ const occupancyColor = (pct) => {
 function OwnerPropertyDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [property, setProperty] = useState(null);
   const [loading, setLoading] = useState(true);

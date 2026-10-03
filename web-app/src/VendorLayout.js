@@ -13,8 +13,8 @@ const ROLE_HOME = {
 
 function VendorLayout() {
   const navigate = useNavigate();
-  const role = localStorage.getItem("role");
-  const username = localStorage.getItem("username") || "Vendor";
+  const role = sessionStorage.getItem("role");
+  const username = sessionStorage.getItem("username") || "Vendor";
 
   if (role && role !== "Vendor") {
     navigate(ROLE_HOME[role] || "/", { replace: true });
@@ -22,8 +22,8 @@ function VendorLayout() {
   }
 
   const logout = () => {
-    const slug = localStorage.getItem("company_slug");
-    localStorage.clear();
+    const slug = sessionStorage.getItem("company_slug");
+    sessionStorage.clear();
     navigate(slug ? `/portal/${slug}` : "/");
   };
 

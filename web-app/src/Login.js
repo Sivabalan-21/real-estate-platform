@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom'; 
+import { useNavigate, useLocation } from 'react-router-dom'; 
 import './Login.css';
 
 function Login() {
@@ -11,6 +11,15 @@ function Login() {
 
   const [status, setStatus] = useState({ message: '', type: '' });
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Set by RequireRole when someone opens a protected link (e.g. the ticket
+  // link in an email) while signed out. Only same-site paths are accepted.
+  const rawFrom = location.state?.from;
+  const returnTo =
+    typeof rawFrom === 'string' && rawFrom.startsWith('/') && !rawFrom.startsWith('//')
+      ? rawFrom
+      : null;
 
   const handleChange = (event) => {
     setFormData({
@@ -39,21 +48,28 @@ function Login() {
         const payload = JSON.parse(atob(data.access_token.split('.')[1]));
 
       // 🔥 CLEAR OLD DATA FIRST
-        localStorage.clear();
+        sessionStorage.clear();
 
       // 🔥 SET NEW SESSION DATA
-        localStorage.setItem("token", data.access_token);
-        localStorage.setItem("role", payload.role);
-        localStorage.setItem("username", payload.sub);
-        localStorage.setItem("display_name", data.full_name || payload.sub);
-        localStorage.setItem("company_name", data.company_name || "");
-        localStorage.setItem("company_slug", data.company_slug || "");
-        localStorage.setItem("status", data.status || "active");
+        sessionStorage.setItem("token", data.access_token);
+        sessionStorage.setItem("role", payload.role);
+        sessionStorage.setItem("username", payload.sub);
+        sessionStorage.setItem("display_name", data.full_name || payload.sub);
+        sessionStorage.setItem("company_name", data.company_name || "");
+        sessionStorage.setItem("company_slug", data.company_slug || "");
+        sessionStorage.setItem("status", data.status || "active");
 
         setStatus({ message: 'Login successful', type: 'success' });
 
         setTimeout(() => {
           const role = payload.role;
+
+          // Came here from a protected link: go back to it. If this role
+          // isn't allowed there, RequireRole sends them to their own home.
+          if (returnTo) {
+            navigate(returnTo, { replace: true });
+            return;
+          }
 
           if (role === "Super Admin") {
             navigate("/dashboard"); // your current super admin dashboard

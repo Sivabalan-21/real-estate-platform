@@ -29,7 +29,7 @@ function formatRent(amount) {
 
 function TenantDashboard() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const isMobile = useIsMobile();
 
   const [data, setData] = useState(null);

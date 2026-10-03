@@ -17,7 +17,7 @@ const time = (c) => (c.created_at ? new Date(c.created_at).getTime() : 0);
 
 function Companies() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
 
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
