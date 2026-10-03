@@ -2,6 +2,7 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 import Login from "./Login";
+import RateTicket from "./RateTicket";
 import ResetPassword from "./ResetPassword";
 
 import Layout from "./Layout";
@@ -100,6 +101,7 @@ function App() {
         <Route path="/register/:token"         element={<Register />} />
         <Route path="/upload-logo/:token" element={<UploadLogo />} />
         <Route path="/vendor-access/:token"    element={<VendorAccess />} />
+        <Route path="/rate/:token"             element={<RateTicket />} />
         {/* Alias per spec (/vendor/:token). Static /vendor/dashboard etc. still win. */}
         <Route path="/vendor/:token"           element={<VendorAccess />} />
 
