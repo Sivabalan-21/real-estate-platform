@@ -3,8 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { ApiError, formatMoney, statusStyle, timeAgo, vendorFetch } from "./vendorApi";
 
 // Which section of the dashboard a ticket status belongs to.
+//   Needs your quote : quote_requested
+//   In progress      : everything between quote and finished work (approved, in_progress, ...)
+//   Completed        : work done, vendor still owes the final invoice
+//   Closed           : PM closed the ticket (or it was rejected) - nothing left to do
 const NEEDS_ACTION = ["quote_requested"];
-const FINISHED = ["completed", "closed", "rejected"];
+const COMPLETED = ["completed"];
+const CLOSED = ["closed", "rejected"];
 
 const EMPTY_COPY = {
   no_vendor_profile: {
@@ -39,6 +44,10 @@ function JobCard({ job, onOpen }) {
         <span style={{ marginLeft: "auto" }}>Updated {timeAgo(job.updated_at || job.created_at)}</span>
       </div>
       {job.can_submit_quote && <div style={s.cta}>Upload your quote →</div>}
+      {job.can_submit_invoice && !job.has_invoice && <div style={s.cta}>Upload your final invoice →</div>}
+      {job.status === "completed" && job.has_invoice && (
+        <div style={s.done}>✓ Invoice submitted. Waiting for the property manager to close this job.</div>
+      )}
     </button>
   );
 }
@@ -97,10 +106,16 @@ function VendorDashboard() {
 
   const open = (id) => navigate(`/vendor/jobs/${id}`);
 
-  const jobs = (data && data.jobs) || [];
+  // Most recently updated first inside every section.
+  const jobs = [...((data && data.jobs) || [])].sort(
+    (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)
+  );
   const action = jobs.filter((j) => NEEDS_ACTION.includes(j.status));
-  const finished = jobs.filter((j) => FINISHED.includes(j.status));
-  const active = jobs.filter((j) => !NEEDS_ACTION.includes(j.status) && !FINISHED.includes(j.status));
+  const completed = jobs.filter((j) => COMPLETED.includes(j.status));
+  const closed = jobs.filter((j) => CLOSED.includes(j.status));
+  const active = jobs.filter(
+    (j) => !NEEDS_ACTION.includes(j.status) && !COMPLETED.includes(j.status) && !CLOSED.includes(j.status)
+  );
 
   return (
     <div style={s.page}>
@@ -134,8 +149,9 @@ function VendorDashboard() {
       {!error && (
         <>
           <Section title="Needs your quote" count={action.length} jobs={action} onOpen={open} accent />
-          <Section title="In progress" count={active.length} jobs={active} onOpen={open} />
-          <Section title="Completed" count={finished.length} jobs={finished} onOpen={open} />
+          <Section title="Approved / In progress" count={active.length} jobs={active} onOpen={open} />
+          <Section title="Completed · invoice" count={completed.length} jobs={completed} onOpen={open} accent={completed.some((j) => !j.has_invoice)} />
+          <Section title="Closed" count={closed.length} jobs={closed} onOpen={open} />
         </>
       )}
     </div>
@@ -160,6 +176,7 @@ const s = {
   cardMeta: { display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, fontSize: 12, color: "#64748b", alignItems: "center" },
   urgent: { color: "#b91c1c", fontWeight: 700 },
   cta: { marginTop: 10, color: "#4f46e5", fontWeight: 700, fontSize: 13 },
+  done: { marginTop: 10, color: "#166534", fontWeight: 600, fontSize: 13 },
   empty: { textAlign: "center", background: "#fff", border: "1px dashed #cbd5e1", borderRadius: 12, padding: "36px 24px" },
   errorBox: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "12px 14px", fontSize: 14 },
   linkBtn: { border: 0, background: "transparent", color: "#4f46e5", fontWeight: 700, cursor: "pointer", padding: 0, font: "inherit" },

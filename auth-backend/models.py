@@ -367,6 +367,7 @@ class MaintenanceTicket(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
+    resolution_note = Column(Text, nullable=True)   # Day 39: PM's closing note
 
     company = relationship("Company")
     property = relationship("Property")
@@ -606,5 +607,3 @@ class PropertyAssignment(Base):
 
     property    = relationship("Property", back_populates="assignments")
     pm_user     = relationship("User", foreign_keys=[pm_username])
-
-

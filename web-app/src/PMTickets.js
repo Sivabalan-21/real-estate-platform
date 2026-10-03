@@ -72,6 +72,7 @@ function PMTickets() {
   const [properties, setProperties] = useState([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
+  const [showClosed, setShowClosed] = useState(false);   // Day 39: closed tickets hidden by default
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const fetchingRef = useRef(false);
@@ -98,6 +99,7 @@ function PMTickets() {
       const params = new URLSearchParams();
       if (statusFilter) params.set("status", statusFilter);
       if (propertyFilter) params.set("property_id", propertyFilter);
+      if (showClosed) params.set("include_closed", "true");
       params.set("sort", "updated_at");
 
       const res = await fetch(`${API}/pm/tickets?${params.toString()}`, {
@@ -138,7 +140,7 @@ function PMTickets() {
       fetchingRef.current = false;
       if (!silent) setLoading(false);
     }
-  }, [token, username, statusFilter, propertyFilter]);
+  }, [token, username, statusFilter, propertyFilter, showClosed]);
 
   useEffect(() => { fetchProperties(); }, [fetchProperties]);
   useEffect(() => {
@@ -181,6 +183,15 @@ function PMTickets() {
             ))}
           </select>
         </div>
+
+        <label style={s.toggle}>
+          <input
+            type="checkbox"
+            checked={showClosed}
+            onChange={e => setShowClosed(e.target.checked)}
+          />
+          Show Closed
+        </label>
       </div>
 
       {error && <p style={s.errorText}>{error}</p>}
@@ -246,10 +257,11 @@ const s = {
   title:     { margin: 0, fontSize: 22, fontWeight: 700, color: "#0f172a" },
   subtitle:  { margin: "4px 0 0", fontSize: 13, color: "#64748b" },
 
-  filters:      { display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 },
+  filters:      { display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 20 },
   filterGroup:  { display: "flex", flexDirection: "column", gap: 4, minWidth: 180 },
   filterLabel:  { fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 },
   select:       { padding: "9px 12px", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#0f172a" },
+  toggle:       { display: "flex", alignItems: "center", gap: 8, padding: "9px 0", fontSize: 13, fontWeight: 600, color: "#334155", cursor: "pointer" },
 
   errorText: { color: "#ef4444", fontSize: 13, marginBottom: 16 },
   muted:     { color: "#64748b", fontSize: 14 },

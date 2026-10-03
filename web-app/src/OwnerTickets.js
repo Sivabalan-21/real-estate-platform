@@ -22,11 +22,25 @@ const STATUS_STYLES = {
 
 const CATEGORIES = ["Plumbing", "Electrical", "HVAC", "Roof", "Drywall", "Pest", "Appliance", "Other"];
 
-function formatDate(dateStr) {
-  if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+// Backend timestamps are naive UTC (no "Z"), so add one before parsing or the
+// browser reads them as local time and shows the wrong hour.
+function toDate(value) {
+  if (!value) return null;
+  const normalized =
+    typeof value === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? `${value}Z` : value;
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateTime(value) {
+  const d = toDate(value);
+  if (!d) return "—";
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatQuote(amount) {
+  if (amount == null) return "—";
+  return `₹${Number(amount).toLocaleString("en-IN")}`;
 }
 
 function StatusPill({ status }) {
@@ -167,7 +181,7 @@ function OwnerTickets() {
     <div style={s.page}>
       <div style={s.header}>
         <h1 style={s.title}>Tickets</h1>
-        <p style={s.subtitle}>Open maintenance tickets across every property you own.</p>
+        <p style={s.subtitle}>Open maintenance tickets across every property you own, most recently updated first.</p>
       </div>
 
       <div style={s.banner}>
@@ -237,7 +251,7 @@ function OwnerTickets() {
                 <th style={s.th}>Category</th>
                 <th style={s.th}>Status</th>
                 <th style={s.th}>PM Assigned</th>
-                <th style={s.th}>Created</th>
+                <th style={s.th}>Last Updated</th>
                 <th style={s.th}>Quote Amount</th>
                 <th style={s.th}></th>
               </tr>
@@ -271,8 +285,8 @@ function OwnerTickets() {
                       )}
                     </td>
                     <td style={s.td}>{t.assigned_pm_name || t.assigned_pm || "Unassigned"}</td>
-                    <td style={s.td}>{formatDate(t.created_at)}</td>
-                    <td style={s.td}>{t.quote_amount != null ? t.quote_amount : "—"}</td>
+                    <td style={s.td}>{formatDateTime(t.last_update_at || t.updated_at)}</td>
+                    <td style={s.td}>{formatQuote(t.quote_amount)}</td>
                     <td style={s.td}>
                       <span style={s.reviewLink}>{t.approval_required ? "Review →" : "View →"}</span>
                     </td>

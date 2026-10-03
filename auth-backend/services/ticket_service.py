@@ -103,6 +103,17 @@ def transition_ticket(
     if new_status not in allowed_next_statuses(current_status, user.role):
         raise HTTPException(400, "Transition not allowed for role")
 
+    if new_status == "closed":
+        resolution = (note or "").strip()
+        if not resolution:
+            raise HTTPException(400, "Resolution note required")
+        ticket.resolution_note = resolution
+
+    # The first PM to act on a ticket becomes its assigned PM, so owner/tenant
+    # views stop showing "Unassigned" on tickets a PM is clearly handling.
+    if user.role == ROLE_PROPERTY_MANAGER and not ticket.assigned_pm:
+        ticket.assigned_pm = user.username
+
     previous_status = ticket.status
     ticket.status = new_status
     ticket.updated_at = datetime.utcnow()
