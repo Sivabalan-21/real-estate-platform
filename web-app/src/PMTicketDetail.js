@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import TicketComments from "./TicketComments";
-import AttachmentTabs from "./AttachmentTabs";
+import AttachmentTabs, { fetchAttachments } from "./AttachmentTabs";
 
 const API = "http://localhost:8000";
 
@@ -101,6 +101,9 @@ function StatusStepper({ status }) {
 // dispute, per the task's "Big Picture" rationale).
 function TransitionModal({ action, submitting, error, onCancel, onConfirm }) {
   const [note, setNote] = useState("");
+  const [tenantConfirmed, setTenantConfirmed] = useState(false);
+  const isClose = action.to === "closed";
+  const canConfirm = !submitting && (!isClose || note.trim().length > 0);
 
   return (
     <div style={s.modalOverlay} onClick={submitting ? undefined : onCancel}>
@@ -109,23 +112,49 @@ function TransitionModal({ action, submitting, error, onCancel, onConfirm }) {
         <p style={s.modalSub}>
           This moves the ticket to <strong>{STATUS_STYLES[action.to]?.label || action.to}</strong>.
         </p>
-        <label style={s.modalLabel}>Add note (optional)</label>
+        <label style={s.modalLabel}>
+          {isClose ? "Closing note (required)" : "Add note (optional)"}
+        </label>
         <textarea
           style={s.textarea}
           rows={3}
           value={note}
           onChange={e => setNote(e.target.value)}
-          placeholder="e.g. Tenant confirmed issue still present…"
+          placeholder={isClose
+            ? "e.g. Repaired leaking pipe under sink — corroded joint replaced"
+            : "e.g. Tenant confirmed issue still present…"}
           disabled={submitting}
           autoFocus
         />
+        {isClose && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 0", fontSize: 13, color: "#334155" }}>
+            <input
+              type="checkbox"
+              checked={tenantConfirmed}
+              onChange={e => setTenantConfirmed(e.target.checked)}
+              disabled={submitting}
+            />
+            Tenant confirmed resolution
+          </label>
+        )}
+        {isClose && !note.trim() && (
+          <p style={{ color: "#b45309", fontSize: 12, margin: "6px 0 0" }}>
+            A closing note is required. It is saved on the ticket for future reference.
+          </p>
+        )}
         {error && <p style={s.errorText}>{error}</p>}
         <div style={s.modalActions}>
           <button style={s.modalCancelBtn} onClick={onCancel} disabled={submitting}>
             Cancel
           </button>
-          <button style={s.modalConfirmBtn} onClick={() => onConfirm(note)} disabled={submitting}>
-            {submitting ? "Saving…" : "Confirm"}
+          <button
+            style={{ ...s.modalConfirmBtn, ...(canConfirm ? {} : { opacity: 0.5, cursor: "not-allowed" }) }}
+            onClick={() => onConfirm(
+              isClose && tenantConfirmed ? `${note.trim()} (Tenant confirmed resolution)` : note
+            )}
+            disabled={!canConfirm}
+          >
+            {submitting ? "Saving…" : isClose ? "Close Ticket" : "Confirm"}
           </button>
         </div>
       </div>
@@ -190,6 +219,7 @@ function PMTicketDetail() {
   const [priorityError, setPriorityError] = useState("");
   const [attachmentsVersion, setAttachmentsVersion] = useState(0);
   const [jumpTab, setJumpTab] = useState(null);
+  const [hasInvoice, setHasInvoice] = useState(false);
   const fetchTicket = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -213,6 +243,14 @@ function PMTicketDetail() {
   }, [id, token]);
 
   useEffect(() => { fetchTicket(); }, [fetchTicket]);
+
+  // 'Close Ticket' only appears once the vendor's invoice is on file.
+  useEffect(() => {
+    if (!ticket || ticket.status !== "completed") { setHasInvoice(false); return; }
+    fetchAttachments(ticket.id, token)
+      .then(d => setHasInvoice((d.invoices || []).length > 0))
+      .catch(() => setHasInvoice(false));
+  }, [ticket?.id, ticket?.status, attachmentsVersion, token]);
 
   useEffect(() => {
     fetch(`${API}/vendors`, { headers: { Authorization: `Bearer ${token}` } })
@@ -391,7 +429,9 @@ function PMTicketDetail() {
   if (!ticket) return null;
 
   const st = STATUS_STYLES[ticket.status] || { bg: "#f1f5f9", color: "#475569", label: ticket.status };
-  const actions = TICKET_ACTIONS[ticket.status] || [];
+  const actions = (TICKET_ACTIONS[ticket.status] || []).filter(
+    a => !(a.to === "closed" && ticket.assigned_vendor_id && !hasInvoice)
+  );
   const history = ticket.history || [];
   const canChangePriority = ACTIVE_PRIORITY_STATUSES.has(ticket.status);
 
@@ -452,6 +492,13 @@ function PMTicketDetail() {
             </div>
           )}
         </div>
+
+        {ticket.resolution_note && (
+          <div style={s.metadataPanel}>
+            <p style={s.sectionLabel}>Resolution note</p>
+            <p style={s.metaValue}>{ticket.resolution_note}</p>
+          </div>
+        )}
 
         <div style={s.metadataPanel}>
           <p style={s.sectionLabel}>Ticket Details</p>
@@ -571,6 +618,8 @@ function PMTicketDetail() {
                 </button>
               ))}
             </div>
+          ) : ticket.status === "completed" && ticket.assigned_vendor_id ? (
+            <p style={s.muted}>Waiting on the vendor's final invoice before this ticket can be closed.</p>
           ) : ticket.status === "quote_requested" ? (
             <p style={s.muted}>Waiting on the vendor quote.</p>
           ) : ticket.status === "pending_owner_approval" ? (

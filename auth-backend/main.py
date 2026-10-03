@@ -22,6 +22,7 @@ from models import Company, User, DimensionType, Property, PropertyDimension, Pr
 from attachment_helpers import (
     check_file_size, check_ticket_total, to_kb, next_quote_version,
     group_attachments, role_key,
+    GROUP_OF, VISIBLE_GROUPS, OWNER_INVOICE_STATUSES,
 )
 from rbac import ROLE_COMPANY_ADMIN, ROLE_PROPERTY_MANAGER, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_TENANT, ROLE_OWNER, ROLE_VENDOR, ROLE_HIERARCHY
 from schemas import (
@@ -1821,6 +1822,7 @@ def serialize_ticket(ticket: MaintenanceTicket):
         "updated_at": ticket.updated_at,
         "last_update_at": ticket.updated_at,  # Day 16 spec's naming; same value as updated_at
         "closed_at": ticket.closed_at,
+        "resolution_note": ticket.resolution_note,
         # Capped at 3 (MAX_TICKET_PHOTOS_PER_UPLOAD), so cheap to include on
         # every ticket everywhere it's serialized — PM/Owner views need to
         # see at a glance that a tenant attached photos, not just the detail
@@ -1837,6 +1839,17 @@ def serialize_ticket(ticket: MaintenanceTicket):
             for h in ticket.history
         ],
     }
+
+
+def filter_attachments_for_role(items, role, ticket_status=None):
+    """serialize_ticket() puts EVERY attachment on the ticket. Tenants must not
+    see vendor quotes/invoices (they carry prices), and owners follow the same
+    rules as GET /tickets/{id}/attachments (quotes; invoices only after approval)."""
+    key = role_key(role)
+    allowed = set(VISIBLE_GROUPS.get(key, {"photos"}))
+    if key == "owner" and ticket_status in OWNER_INVOICE_STATUSES:
+        allowed.add("invoices")
+    return [a for a in items if GROUP_OF.get(str(a.get("type")).lower()) in allowed]
 
 
 # Compatibility alias used by the M1 list/filter endpoints.  The canonical
@@ -2267,7 +2280,12 @@ def get_my_tickets(
         .order_by(MaintenanceTicket.created_at.desc())
         .all()
     )
-    return [serialize_ticket(t) for t in tickets]
+    out = []
+    for t in tickets:
+        d = serialize_ticket(t)
+        d["attachments"] = filter_attachments_for_role(d["attachments"], user.role, t.status)
+        out.append(d)
+    return out
 
 
 @app.get("/tickets/{ticket_id}")
@@ -2291,6 +2309,8 @@ def get_ticket(
         raise HTTPException(403, "Not authorized for this ticket")
 
     data = serialize_ticket(ticket)
+    if user.role in (ROLE_TENANT, ROLE_OWNER):
+        data["attachments"] = filter_attachments_for_role(data["attachments"], user.role, ticket.status)
     # Tenants keep the minimal {status, changed_at} history serialize_ticket()
     # already set — internal audit fields (changed_by, PM notes) aren't
     # tenant-facing. Everyone else gets the full record.
@@ -2302,10 +2322,13 @@ def get_ticket(
             if ticket.assigned_pm_user else None
         )
         data["assigned_vendor"] = (
-            {"id": ticket.assigned_vendor_id, "name": ticket.assigned_vendor_id}
+            {
+                "id": ticket.assigned_vendor_id,
+                "name": ticket.assigned_vendor.name if ticket.assigned_vendor else ticket.assigned_vendor_id,
+            }
             if ticket.assigned_vendor_id else None
         )
-        data["quote_amount"] = None
+        data["quote_amount"] = ticket.quote_amount
         data["approval_required"] = ticket.status == OWNER_APPROVAL_STATUS
         raised_by_user = (
             db.query(User).filter(User.username == ticket.created_by).first()
@@ -2448,6 +2471,7 @@ def get_pm_tickets(
     status: str = None,
     property_id: str = None,
     sort: str = "created_at",
+    include_closed: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
@@ -2476,6 +2500,8 @@ def get_pm_tickets(
     else:
         # "rejected" is included: a PM can send it back for a revised quote
         pm_default_statuses = set(ACTIVE_TICKET_STATUSES) | {"rejected"}
+        if include_closed:                      # Day 39: 'Show Closed' toggle
+            pm_default_statuses |= {"closed"}
         query = query.filter(MaintenanceTicket.status.in_(pm_default_statuses))
 
     sort_column = MaintenanceTicket.updated_at if sort == "updated_at" else MaintenanceTicket.created_at
@@ -2608,7 +2634,7 @@ def recompute_vendor_stats(db: Session, vendor_id: str | None) -> None:
     db.flush()  # make sure this request's status/rating changes are visible below
     done = (
         MaintenanceTicket.assigned_vendor_id == vendor_id,
-        MaintenanceTicket.status.in_(VENDOR_DONE_STATUSES),
+        MaintenanceTicket.status == "closed",
     )
     vendor.total_jobs = db.query(MaintenanceTicket).filter(*done).count()
     avg = (
@@ -2885,7 +2911,8 @@ def serialize_owner_ticket(ticket: MaintenanceTicket):
     # No quote/estimate model exists yet (Month 2 vendor work) — placeholder
     # key so the frontend column is already wired and doesn't need a shape
     # change once quotes land.
-    data["quote_amount"] = None
+    data["quote_amount"] = ticket.quote_amount
+    data["attachments"] = filter_attachments_for_role(data["attachments"], ROLE_OWNER, ticket.status)
     # Badge is wired now but will always be False today — nothing sets
     # OWNER_APPROVAL_STATUS until the Day 31 owner-approval workflow lands.
     data["approval_required"] = ticket.status == OWNER_APPROVAL_STATUS
@@ -2946,7 +2973,7 @@ def get_owner_tickets(
         # up via an explicit ?status= filter.
         query = query.filter(MaintenanceTicket.status.in_(("open", "in_progress")))
 
-    tickets = query.order_by(MaintenanceTicket.created_at.desc()).all()
+    tickets = query.order_by(MaintenanceTicket.updated_at.desc()).all()
 
     # Pending-approval count is wired now (Day 18) so Day 31 only has to add
     # action buttons — always 0 today since nothing sets
@@ -3727,6 +3754,8 @@ def _vendor_job_summary(ticket: MaintenanceTicket) -> dict:
         "unit_number": ticket.unit.unit_number if ticket.unit else None,
         "quote_amount": ticket.quote_amount,
         "can_submit_quote": ticket.status == "quote_requested",
+        "can_submit_invoice": ticket.status == "completed",
+        "has_invoice": any(a.type == "invoice" for a in ticket.attachments),
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }

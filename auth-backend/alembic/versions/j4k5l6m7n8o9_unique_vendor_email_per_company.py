@@ -8,14 +8,10 @@ depends_on = None
 
 
 def upgrade():
-    op.execute("ALTER TABLE vendors DROP CONSTRAINT IF EXISTS vendors_email_key")
-    op.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_vendors_company_email
-        ON vendors (company_id, lower(email))
-        WHERE email IS NOT NULL
-    """)
+    op.execute("ALTER TABLE maintenance_tickets ADD COLUMN IF NOT EXISTS resolution_note TEXT")
+    op.execute("ALTER TABLE ticket_attachments DROP COLUMN IF EXISTS attachment_type")
+    op.execute("ALTER TABLE ticket_attachments ALTER COLUMN version DROP NOT NULL")
 
 
 def downgrade():
-    op.execute("DROP INDEX IF EXISTS uq_vendors_company_email")
-    op.execute("ALTER TABLE vendors ADD CONSTRAINT vendors_email_key UNIQUE (email)")
+    op.execute("ALTER TABLE maintenance_tickets DROP COLUMN IF EXISTS resolution_note")
