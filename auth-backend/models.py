@@ -610,3 +610,21 @@ class PropertyAssignment(Base):
 
     property    = relationship("Property", back_populates="assignments")
     pm_user     = relationship("User", foreign_keys=[pm_username])
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id         = Column(String, primary_key=True, default=uuid_str)
+    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type       = Column(String, nullable=False)  # ticket_created/quote_submitted/owner_decision/ticket_update/lease_expiry
+    title      = Column(String(80), nullable=False)
+    body       = Column(String(200), nullable=False)
+    ticket_id  = Column(String, ForeignKey("maintenance_tickets.id", ondelete="CASCADE"), nullable=True)
+    is_read    = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+        Index("ix_notifications_user_unread", "user_id", "is_read"),
+    )
