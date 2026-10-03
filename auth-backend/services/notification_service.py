@@ -4,7 +4,7 @@ import secrets
 import traceback
 from urllib.parse import quote
 
-from models import User, PropertyAssignment, Company, Vendor, VendorTicketAccess, TicketComment
+from models import User, PropertyAssignment, Company, Vendor, VendorTicketAccess, TicketComment, Notification
 from rbac import ROLE_OWNER, ROLE_TENANT
 from ticket_states import PENDING_OWNER_APPROVAL
 from tokens import create_vendor_access_token, is_token_expired
@@ -53,6 +53,41 @@ async def _send(to_email, subject, body) -> bool:
     except Exception as exc:
         print(f"[notify] EMAIL FAILED '{subject}' -> {to_email}: {type(exc).__name__}: {exc}")
         return False
+
+
+NOTIFICATION_TYPES = {
+    "ticket_created", "quote_submitted", "owner_decision", "ticket_update", "lease_expiry",
+}
+
+
+def _clip(text, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def create_in_app_notification(user_id, type, title, body, ticket_id, db):
+    """Insert one in-app notification row. Never raises, so a failure here
+    can't break the ticket workflow or the email that goes with it."""
+    if not user_id:
+        return None
+    if type not in NOTIFICATION_TYPES:
+        print(f"[notify] unknown in-app notification type '{type}', skipping")
+        return None
+    try:
+        notif = Notification(
+            user_id=user_id,
+            type=type,
+            title=_clip(title, 80),
+            body=_clip(body, 200),
+            ticket_id=ticket_id,
+        )
+        db.add(notif)
+        db.commit()
+        return notif
+    except Exception as exc:
+        db.rollback()
+        print(f"[notify] IN-APP FAILED '{type}' -> user {user_id}: {exc.__class__.__name__}: {exc}")
+        return None
 
 
 def _display_name(user) -> str:
@@ -147,6 +182,15 @@ async def notify_ticket_created(ticket, db):
         link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
         subject = f"New Maintenance Request — {place}"
 
+        tenant_name = _display_name(tenant) if tenant else (ticket.created_by or "A tenant")
+        for pm in pms:
+            create_in_app_notification(
+                pm.id, "ticket_created",
+                f"New request — {place}",
+                f"{tenant_name} · {ticket.category or 'Maintenance'}: {ticket.description or '-'}",
+                ticket.id, db,
+            )
+
         for pm in pms:
             body = f"""
 Hi {_display_name(pm)},
@@ -201,6 +245,14 @@ async def notify_quote_submitted(ticket, db):
         subject = f"Quote Ready for Approval — {place}"
 
         for owner in owners:
+            create_in_app_notification(
+                owner.id, "quote_submitted",
+                f"Quote ready for approval — {place}",
+                f"Quote amount: {amount}. {summary or ''}",
+                ticket.id, db,
+            )
+
+        for owner in owners:
             body = f"""
 Hi {_display_name(owner)},
 
@@ -245,6 +297,14 @@ async def notify_owner_decision(ticket, decision, comment, db):
         subject = f"Owner {decision_label} — {_property_label(ticket)} Unit {_unit_label(ticket)}"
         owner_comment = (comment or "").strip() or "(no comment)"
 
+        for pm in pms:
+            create_in_app_notification(
+                pm.id, "owner_decision",
+                f"Owner {decision_label} — {_place(ticket)}",
+                f"Owner's comment: {owner_comment}",
+                ticket.id, db,
+            )
+
         if decision_label == "Rejected":
             next_step = "\nNext step: get a revised quote or contact the owner.\n"
         else:
@@ -284,6 +344,13 @@ async def notify_ticket_closed(ticket, db):
         token = _ensure_rating_token(ticket, db)
         rate_link = f"{_frontend_url()}/rate/{token}"
         subject = f"Your maintenance request has been resolved — {_category_label(ticket)}"
+
+        create_in_app_notification(
+            tenant.id, "ticket_update",
+            f"Request resolved — {_category_label(ticket)}",
+            f"{_place(ticket)}: your request has been resolved and closed. Please rate the work.",
+            ticket.id, db,
+        )
         body = f"""
 Hi {_display_name(tenant)},
 
@@ -336,6 +403,13 @@ async def notify_ticket_status_update(ticket, new_status, db):
         follow_up = _STATUS_FOLLOW_UP.get(new_status, "")
         link = _app_link(ticket, db, f"/tenant/maintenance/{ticket.id}")
         subject = f"Update on your request — {_category_label(ticket)}"
+
+        create_in_app_notification(
+            tenant.id, "ticket_update",
+            f"Request {label} — {_category_label(ticket)}",
+            f"{_place(ticket)}: your request is now {label}. {follow_up}",
+            ticket.id, db,
+        )
         body = f"""
 Hi {_display_name(tenant)},
 
@@ -371,6 +445,13 @@ async def notify_vendor_invoice_request(ticket, db):
             print(f"[notify] ticket {ticket.id}: no vendor assigned, skipping invoice request")
             return
         vendor = db.query(Vendor).filter(Vendor.id == ticket.assigned_vendor_id).first()
+        if vendor and vendor.user_id:
+            create_in_app_notification(
+                vendor.user_id, "ticket_update",
+                f"Submit your invoice — {_place(ticket)}",
+                "This job is marked completed. Please upload your invoice (PDF) so the ticket can be closed.",
+                ticket.id, db,
+            )
         if not vendor or not vendor.email:
             print(f"[notify] ticket {ticket.id}: vendor has no email, skipping invoice request")
             return
@@ -419,6 +500,13 @@ async def notify_invoice_received_pm(ticket, db, vendor_name: str):
         link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
         subject = f"Invoice Received - {place}"
         for pm in pms:
+            create_in_app_notification(
+                pm.id, "ticket_update",
+                f"Invoice received — {place}",
+                f"{vendor_name} uploaded their invoice. The ticket is ready to be closed.",
+                ticket.id, db,
+            )
+        for pm in pms:
             body = f"""
 Hi {_display_name(pm)},
 
@@ -455,6 +543,13 @@ async def notify_quote_received_pm(ticket, db, vendor_name: str):
 
         link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
         subject = f"Quote Received - {place}"
+        for pm in pms:
+            create_in_app_notification(
+                pm.id, "quote_submitted",
+                f"Quote received — {place}",
+                f"{vendor_name} uploaded a quote. Amount: {amount}.",
+                ticket.id, db,
+            )
         for pm in pms:
             body = f"""
 Hi {_display_name(pm)},
@@ -511,6 +606,13 @@ async def notify_vendor_requote(ticket, db):
             print(f"[notify] ticket {ticket.id}: no vendor assigned, skipping re-quote email")
             return
         vendor = db.query(Vendor).filter(Vendor.id == ticket.assigned_vendor_id).first()
+        if vendor and vendor.user_id:
+            create_in_app_notification(
+                vendor.user_id, "ticket_update",
+                f"Revised quote requested — {_place(ticket)}",
+                "Your previous quote was not approved. Review the comments and submit a revised quote.",
+                ticket.id, db,
+            )
         if not vendor or not vendor.email:
             print(f"[notify] ticket {ticket.id}: vendor has no email, skipping re-quote email")
             return

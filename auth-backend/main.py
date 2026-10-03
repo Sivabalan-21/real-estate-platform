@@ -20,7 +20,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import Base, SessionLocal, engine
-from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory, VendorTicketAccess
+from models import Company, User, DimensionType, Property, PropertyDimension, PropertyAssignment, Unit, Lease, UnitPhoto, MaintenanceTicket, TicketAttachment, TicketHistory, TicketComment, Vendor, VendorCategory, VendorTicketAccess, Notification
 from attachment_helpers import (
     check_file_size, check_ticket_total, to_kb, next_quote_version,
     group_attachments, role_key,
@@ -131,7 +131,7 @@ def _vendor_may_access(request: Request) -> bool:
     _authorize_ticket_access). Everything else is company data they have no
     business seeing (tickets, leases, tenants, properties...)."""
     path, method = request.url.path, request.method
-    if path.startswith("/vendor/") or path == "/users/me":
+    if path.startswith("/vendor/") or path == "/users/me" or path.startswith("/notifications"):
         return True
     if path == "/vendors" and method == "GET":
         return True
@@ -4027,3 +4027,73 @@ def rate_ticket_endpoint(
     db.commit()
     db.refresh(ticket)
     return serialize_ticket(ticket)
+
+
+def serialize_notification(n: Notification) -> dict:
+    return {
+        "id": n.id,
+        "type": n.type,
+        "title": n.title,
+        "body": n.body,
+        "ticket_id": n.ticket_id,
+        "is_read": n.is_read,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    }
+
+
+def _unread_count(db: Session, user_id: str) -> int:
+    return (
+        db.query(Notification)
+        .filter(Notification.user_id == user_id, Notification.is_read.is_(False))
+        .count()
+    )
+
+
+@app.get("/notifications")
+def list_notifications(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    rows = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id)
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "unread_count": _unread_count(db, user.id),
+        "items": [serialize_notification(n) for n in rows],
+    }
+
+
+@app.post("/notifications/read-all")
+def mark_all_notifications_read(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    db.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.is_read.is_(False),
+    ).update({Notification.is_read: True}, synchronize_session=False)
+    db.commit()
+    return {"unread_count": 0}
+
+
+@app.patch("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    n = (
+        db.query(Notification)
+        .filter(Notification.id == notification_id, Notification.user_id == user.id)
+        .first()
+    )
+    if not n:
+        raise HTTPException(404, "Notification not found")
+    n.is_read = True
+    db.commit()
+    db.refresh(n)
+    return {**serialize_notification(n), "unread_count": _unread_count(db, user.id)}
