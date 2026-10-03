@@ -114,3 +114,25 @@ def test_email_failure_does_not_roll_back_assignment(db_session, company_a, clie
     assert r.status_code == 200
     assert r.json()["status"] == "quote_requested"
     assert r.json()["vendor_email_sent"] is False
+
+
+def test_assign_vendor_with_login_account_emails_portal_link(db_session, company_a, client_factory, setup, sent_emails):
+    """Vendor linked to a login (user_id set) gets a /portal/<slug> link, not a token link.
+    Regression: build_login_link was undefined, so this path silently sent no email."""
+    from rbac import ROLE_VENDOR
+    pm, tid, _ = setup
+    vendor = _vendor(db_session, company_a)
+    vendor_user = _user(db_session, company_a, "vendor_login_d36", ROLE_VENDOR)
+    vendor.user_id = vendor_user.id
+    db_session.commit()
+    client = client_factory(pm)
+    _to_review(client, tid)
+
+    r = client.post(f"/tickets/{tid}/assign-vendor", json={"vendor_id": vendor.id})
+    assert r.status_code == 200
+    assert len(sent_emails) == 1
+    assert sent_emails[0]["to"] == "acme@example.com"
+    # Company has a portal slug -> encoded ?next= ; otherwise the plain path.
+    body = sent_emails[0]["body"]
+    assert f"/vendor/jobs/{tid}" in body or f"%2Fvendor%2Fjobs%2F{tid}" in body
+    assert "/vendor-access/" not in body

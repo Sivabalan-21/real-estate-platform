@@ -52,7 +52,7 @@ from schemas import (
     VendorUpdate,
     AssignVendorRequest,
 )
-from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, maybe_notify_vendor_requote, maybe_notify_ticket_closed, notify_quote_received_pm, notify_quote_rejected_pm, _get_pm_users as get_ticket_pm_users
+from services.notification_service import notify_ticket_created, notify_quote_submitted, maybe_notify_quote_submitted, maybe_notify_vendor_requote, maybe_notify_ticket_closed, maybe_notify_ticket_status_update, maybe_notify_vendor_invoice_request, notify_invoice_received_pm, notify_owner_decision, notify_quote_received_pm, _get_pm_users as get_ticket_pm_users, _app_link as _notif_app_link
 from ticket_states import TICKET_STATUS_FILTERS, TICKET_STATE_LABELS, PENDING_OWNER_APPROVAL
 from services.ticket_service import sync_unit_status_to_maintenance, transition_ticket, vendor_transition_ticket
 from services.vendor_service import get_vendor_for_user
@@ -2196,6 +2196,14 @@ async def update_maintenance_ticket(
         await maybe_notify_ticket_closed(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
+    try:
+        await maybe_notify_ticket_status_update(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+    try:
+        await maybe_notify_vendor_invoice_request(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
 
 
 # ---- Maintenance tickets, Day 14 additions ----
@@ -2402,6 +2410,14 @@ async def transition_ticket_endpoint(
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
         traceback.print_exc()
+    try:
+        await maybe_notify_ticket_status_update(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+    try:
+        await maybe_notify_vendor_invoice_request(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
     return data_out
@@ -2851,7 +2867,7 @@ async def assign_ticket_vendor(
         try:
             if vendor.user_id:
                 # vendor has a login -> send them through the portal login, then to the job
-                link = build_login_link(db, ticket.company_id, f"/vendor/jobs/{ticket.id}")
+                link = _notif_app_link(ticket, db, f"/vendor/jobs/{ticket.id}")
             else:
                 link = f"{FRONTEND_URL}/vendor-access/{token}"
             email_sent = await send_vendor_assignment_email(vendor, ticket, link)
@@ -2909,6 +2925,20 @@ async def update_pm_ticket(
         traceback.print_exc()
     try:
         await maybe_notify_vendor_requote(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
+    try:
+        await maybe_notify_ticket_closed(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+        traceback.print_exc()
+    try:
+        await maybe_notify_ticket_status_update(ticket, db, old_status)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
+    try:
+        await maybe_notify_vendor_invoice_request(ticket, db, old_status)
     except Exception as exc:
         print("[notify] EMAIL FAILED:", exc)
         traceback.print_exc()
@@ -3456,7 +3486,7 @@ def _post_owner_pm_comment(db: Session, ticket: MaintenanceTicket, user: User, b
 
 
 @app.post("/tickets/{ticket_id}/approve")
-def approve_ticket(
+async def approve_ticket(
     ticket_id: str,
     data: OwnerApprovalDecision,
     db: Session = Depends(get_db),
@@ -3471,6 +3501,8 @@ def approve_ticket(
     transition_ticket(db, ticket, "approved", user, comment_body or None)
     db.commit()
     db.refresh(ticket)
+
+    await notify_owner_decision(ticket, "approved", comment_body, db)
 
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
@@ -3495,9 +3527,7 @@ async def reject_ticket(
     db.commit()
     db.refresh(ticket)
 
-    await notify_quote_rejected_pm(
-        ticket, db, user.full_name or user.username, comment_body
-    )
+    await notify_owner_decision(ticket, "rejected", comment_body, db)
 
     data_out = serialize_ticket(ticket)
     data_out["history"] = [serialize_ticket_history(h, db) for h in ticket.history]
@@ -3745,6 +3775,13 @@ async def _store_vendor_invoice(
         if os.path.exists(filepath):
             os.remove(filepath)
         raise
+
+    # Tell the PM the invoice is in (they can now close the ticket). The
+    # upload is already saved, so an email problem must never fail it.
+    try:
+        await notify_invoice_received_pm(ticket, db, vendor.name)
+    except Exception as exc:
+        print("[notify] EMAIL FAILED:", exc)
 
     return serialize_attachment(attachment)
 

@@ -368,6 +368,9 @@ class MaintenanceTicket(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
     resolution_note = Column(Text, nullable=True)   # Day 39: PM's closing note
+    # Day 31: opaque token for the tenant's emailed /rate/:token link
+    # (the endpoint that consumes it is built on Day 44).
+    rating_token = Column(String, unique=True, index=True, nullable=True)
 
     company = relationship("Company")
     property = relationship("Property")

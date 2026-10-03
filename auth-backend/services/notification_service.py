@@ -1,12 +1,15 @@
 import asyncio
 import os
+import secrets
 import traceback
 from urllib.parse import quote
 
-from models import User, PropertyAssignment, Company, Vendor, VendorTicketAccess
+from models import User, PropertyAssignment, Company, Vendor, VendorTicketAccess, TicketComment
 from rbac import ROLE_OWNER, ROLE_TENANT
 from ticket_states import PENDING_OWNER_APPROVAL
 from tokens import create_vendor_access_token, is_token_expired
+
+UNSUBSCRIBE_NOTE = "To stop receiving updates, contact your property manager."
 CURRENCY = "₹"              # change if your quotes use another currency
 SEND_TIMEOUT_SECONDS = 20   # stops a dead mail server from hanging the API
 
@@ -61,6 +64,53 @@ def _place(ticket) -> str:
     if ticket.unit:
         return f"{prop} Unit {ticket.unit.unit_number}"
     return prop
+
+
+def _get_tenant(ticket, db):
+    """The tenant who raised the ticket, or None if a PM/owner raised it."""
+    if not ticket.created_by:
+        return None
+    user = db.query(User).filter(User.username == ticket.created_by).first()
+    return user if user and user.role == ROLE_TENANT else None
+
+
+def _unit_label(ticket) -> str:
+    return str(ticket.unit.unit_number) if ticket.unit else "-"
+
+
+def _property_label(ticket) -> str:
+    return ticket.property.name if ticket.property else "Property"
+
+
+def _category_label(ticket) -> str:
+    return (ticket.category or "Maintenance").strip() or "Maintenance"
+
+
+def _ensure_rating_token(ticket, db) -> str:
+    """Reuse the ticket's rating token, minting one on first use."""
+    if not ticket.rating_token:
+        ticket.rating_token = secrets.token_urlsafe(24)
+        db.add(ticket)
+        db.commit()
+    return ticket.rating_token
+
+
+def _resolution_note(ticket, db) -> str:
+    """Last non-tenant comment visible to everyone; falls back to the
+    resolution note the PM typed when closing."""
+    comment = (
+        db.query(TicketComment)
+        .filter(
+            TicketComment.ticket_id == ticket.id,
+            TicketComment.visible_to == "all",
+            TicketComment.author_role != ROLE_TENANT,
+        )
+        .order_by(TicketComment.created_at.desc())
+        .first()
+    )
+    if comment and (comment.body or "").strip():
+        return comment.body.strip()
+    return (ticket.resolution_note or "").strip() or "-"
 
 
 def _get_pm_users(ticket, db):
@@ -179,31 +229,75 @@ async def maybe_notify_quote_submitted(ticket, db, old_status):
     if old_status != ticket.status and ticket.status == PENDING_OWNER_APPROVAL:
         await notify_quote_submitted(ticket, db)
 
-async def notify_ticket_closed(ticket, db):
-    """Tell the tenant their ticket is closed and invite a rating. Never raises."""
+async def notify_owner_decision(ticket, decision, comment, db):
+    """Tell the ticket's PM(s) the owner approved or rejected. Never raises.
+
+    `decision` is "approved" or "rejected" (any casing).
+    """
     try:
-        tenant = (
-            db.query(User).filter(User.username == ticket.created_by).first()
-            if ticket.created_by else None
-        )
-        if not tenant or tenant.role != ROLE_TENANT:
+        decision_label = "Approved" if str(decision).lower().startswith("approv") else "Rejected"
+        pms = _get_pm_users(ticket, db)
+        if not pms:
+            print(f"[notify] ticket {ticket.id}: no PM found, skipping owner-decision email")
+            return
+
+        link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
+        subject = f"Owner {decision_label} — {_property_label(ticket)} Unit {_unit_label(ticket)}"
+        owner_comment = (comment or "").strip() or "(no comment)"
+
+        if decision_label == "Rejected":
+            next_step = "\nNext step: get a revised quote or contact the owner.\n"
+        else:
+            next_step = ""
+
+        for pm in pms:
+            body = f"""
+Hi {_display_name(pm)},
+
+The owner has {decision_label.lower()} the quote for this request.
+
+Property : {_place(ticket)}
+Category : {ticket.category or "-"}
+Decision : {decision_label}
+Owner's comment : {owner_comment}
+{next_step}
+View the ticket:
+{link}
+
+Regards,
+Property Portal Team
+"""
+            await _send(pm.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_owner_decision error: {exc}")
+        traceback.print_exc()
+
+
+async def notify_ticket_closed(ticket, db):
+    """Tell the tenant their ticket is resolved and invite a rating. Never raises."""
+    try:
+        tenant = _get_tenant(ticket, db)
+        if not tenant:
             print(f"[notify] ticket {ticket.id}: not raised by a tenant, skipping closed email")
             return
 
-        place = _place(ticket)
-        link = _app_link(ticket, db, f"/tenant/maintenance/{ticket.id}")
-        subject = f"Maintenance Request Closed - {place}"
+        token = _ensure_rating_token(ticket, db)
+        rate_link = f"{_frontend_url()}/rate/{token}"
+        subject = f"Your maintenance request has been resolved — {_category_label(ticket)}"
         body = f"""
 Hi {_display_name(tenant)},
 
-Your maintenance request has been completed and closed.
+Your maintenance request has been resolved and closed.
 
-Property : {place}
-Category : {ticket.category or "-"}
-Issue    : {(ticket.description or "-")[:200]}
+Property   : {_place(ticket)}
+Category   : {ticket.category or "-"}
+Your issue : {(ticket.description or "-")[:200]}
+Resolution : {_resolution_note(ticket, db)}
 
 How did we do? Please rate the work:
-{link}
+{rate_link}
+
+{UNSUBSCRIBE_NOTE}
 
 Regards,
 Property Portal Team
@@ -218,6 +312,132 @@ async def maybe_notify_ticket_closed(ticket, db, old_status):
     """Call after a status change is committed. Emails only on the move INTO 'closed'."""
     if old_status != ticket.status and ticket.status == "closed":
         await notify_ticket_closed(ticket, db)
+
+
+# Statuses that get the brief generic tenant update. "closed" has its own
+# richer email above, so it is deliberately not listed here.
+TENANT_UPDATE_STATUSES = {"in_progress": "In Progress", "completed": "Completed"}
+
+_STATUS_FOLLOW_UP = {
+    "in_progress": "We'll notify you when it's complete.",
+    "completed": "We'll let you know once it has been closed.",
+}
+
+
+async def notify_ticket_status_update(ticket, new_status, db):
+    """Brief status email to the tenant. Never raises."""
+    try:
+        tenant = _get_tenant(ticket, db)
+        if not tenant:
+            print(f"[notify] ticket {ticket.id}: not raised by a tenant, skipping status update")
+            return
+
+        label = TENANT_UPDATE_STATUSES.get(new_status) or str(new_status).replace("_", " ").title()
+        follow_up = _STATUS_FOLLOW_UP.get(new_status, "")
+        link = _app_link(ticket, db, f"/tenant/maintenance/{ticket.id}")
+        subject = f"Update on your request — {_category_label(ticket)}"
+        body = f"""
+Hi {_display_name(tenant)},
+
+Your request is now {label}. {follow_up}
+
+Property : {_place(ticket)}
+Track it here:
+{link}
+
+{UNSUBSCRIBE_NOTE}
+
+Regards,
+Property Portal Team
+"""
+        await _send(tenant.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_ticket_status_update error: {exc}")
+        traceback.print_exc()
+
+
+async def maybe_notify_ticket_status_update(ticket, db, old_status):
+    """Call after a status change is committed. Emails the tenant on the move
+    INTO 'in_progress' or 'completed'."""
+    if old_status != ticket.status and ticket.status in TENANT_UPDATE_STATUSES:
+        await notify_ticket_status_update(ticket, ticket.status, db)
+
+
+async def notify_vendor_invoice_request(ticket, db):
+    """Tell the assigned vendor the job is marked Completed and ask for the
+    PDF invoice (the PM cannot close the ticket until it is uploaded). Never raises."""
+    try:
+        if not ticket.assigned_vendor_id:
+            print(f"[notify] ticket {ticket.id}: no vendor assigned, skipping invoice request")
+            return
+        vendor = db.query(Vendor).filter(Vendor.id == ticket.assigned_vendor_id).first()
+        if not vendor or not vendor.email:
+            print(f"[notify] ticket {ticket.id}: vendor has no email, skipping invoice request")
+            return
+
+        place = _place(ticket)
+        link = _vendor_link(ticket, vendor, db)
+        subject = f"Job completed - please submit your invoice — {place}"
+        body = f"""
+Hi {vendor.name},
+
+This job has been marked as completed. Please upload your invoice (PDF)
+so we can close the ticket.
+
+Property : {place}
+Category : {ticket.category or "-"}
+Issue    : {(ticket.description or "-")[:200]}
+
+Upload your invoice:
+{link}
+
+Regards,
+Property Portal Team
+"""
+        await _send(vendor.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_vendor_invoice_request error: {exc}")
+        traceback.print_exc()
+
+
+async def maybe_notify_vendor_invoice_request(ticket, db, old_status):
+    """Call after a status change is committed. Emails the vendor on the move INTO 'completed'."""
+    if old_status != ticket.status and ticket.status == "completed":
+        await notify_vendor_invoice_request(ticket, db)
+
+
+async def notify_invoice_received_pm(ticket, db, vendor_name: str):
+    """Tell the ticket's PM(s) the vendor uploaded their invoice, so the
+    ticket can now be closed. Never raises."""
+    try:
+        pms = _get_pm_users(ticket, db)
+        if not pms:
+            print(f"[notify] ticket {ticket.id}: no PM found, skipping invoice-received email")
+            return
+
+        place = _place(ticket)
+        link = _app_link(ticket, db, f"/pm/tickets/{ticket.id}")
+        subject = f"Invoice Received - {place}"
+        for pm in pms:
+            body = f"""
+Hi {_display_name(pm)},
+
+{vendor_name} has uploaded their invoice. The ticket is ready to be closed.
+
+Property : {place}
+Category : {ticket.category or "-"}
+
+Review the invoice and close the ticket:
+{link}
+
+Regards,
+Property Portal Team
+"""
+            await _send(pm.email, subject, body)
+    except Exception as exc:
+        print(f"[notify] notify_invoice_received_pm error: {exc}")
+        traceback.print_exc()
+
 
 async def notify_quote_received_pm(ticket, db, vendor_name: str):
     """Tell the ticket's PM(s) a vendor just uploaded a quote. Never raises."""
@@ -257,24 +477,8 @@ Property Portal Team
         traceback.print_exc()
 
 async def notify_quote_rejected_pm(ticket, db, owner_name: str, reason: str):
-    """Tell the assigned PM(s) the owner rejected the quote, with the reason."""
-    try:
-        for pm in _get_pm_users(ticket, db):
-            if not getattr(pm, "email", None):
-                continue
-            await _send(
-                pm.email,
-                f"Owner rejected the quote: {_place(ticket)}",
-                (
-                    f"Hi {_display_name(pm)},\n\n"
-                    f"{owner_name} rejected the quote for {_place(ticket)}.\n\n"
-                    f"Reason: {reason}\n\n"
-                    f"You can request a revised quote from the vendor here:\n"
-                    f"{_app_link(ticket, db, f'/pm/tickets/{ticket.id}')}\n"
-                ),
-            )
-    except Exception as exc:       # never let an email problem break the reject action
-        print(f"[notify] rejection email failed for ticket {ticket.id}: {exc}")
+    """Kept for backwards compatibility; delegates to notify_owner_decision."""
+    await notify_owner_decision(ticket, "rejected", reason, db)
 
 
 def _vendor_link(ticket, vendor, db) -> str:
